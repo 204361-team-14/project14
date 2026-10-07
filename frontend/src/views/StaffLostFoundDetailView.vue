@@ -11,8 +11,18 @@ const item = ref(null)
 const statuses = ref({})
 const imageViewerIndex = ref(-1)
 
+const getHeaders = () => {
+  const token = localStorage.getItem('token')
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`
+  }
+}
+
 async function loadDetail() {
-  const response = await fetch(`/api/staff/lost-found/${route.params.id}`)
+  const response = await fetch(`/api/staff/lost-found/${route.params.id}`, {
+    headers: getHeaders()
+  })
   if (!response.ok) {
     router.replace('/staff/lost-found')
     return
@@ -34,7 +44,7 @@ function closeImageViewer() {
 async function updateStatus(status) {
   const response = await fetch(`/api/staff/lost-found/${route.params.id}/status`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({ status })
   })
 

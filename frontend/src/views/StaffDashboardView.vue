@@ -15,8 +15,18 @@ const latestLostFound = ref([])
 const requestStatuses = ref({})
 const lostFoundStatuses = ref({})
 
+const getHeaders = () => {
+  const token = localStorage.getItem('token')
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`
+  }
+}
+
 async function loadDashboard() {
-  const response = await fetch('/api/staff/dashboard')
+  const response = await fetch('/api/staff/dashboard', {
+    headers: getHeaders()
+  })
   const data = await response.json()
 
   Object.assign(stats, data.stats || {})

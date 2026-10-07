@@ -7,12 +7,22 @@ const items = ref([])
 const statuses = ref({})
 const filters = reactive({ q: '', status: '' })
 
+const getHeaders = () => {
+  const token = localStorage.getItem('token')
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`
+  }
+}
+
 async function loadItems() {
   const params = new URLSearchParams()
   if (filters.q) params.set('q', filters.q)
   if (filters.status) params.set('status', filters.status)
 
-  const response = await fetch(`/api/staff/lost-found?${params}`)
+  const response = await fetch(`/api/staff/lost-found?${params}`, {
+    headers: getHeaders()
+  })
   const data = await response.json()
 
   items.value = data.items || []

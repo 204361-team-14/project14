@@ -23,6 +23,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-cs_user}:${POSTGRES_PASSWORD:-cs_password}@db:5432/${POSTGRES_DB:-cs_building_services}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       UPLOAD_FOLDER: /app/uploads
+      SECRET_KEY: ${SECRET_KEY}
     volumes:
       - uploads_data:/app/uploads
     depends_on:

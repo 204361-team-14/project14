@@ -63,6 +63,7 @@ cs_building_services_vue_postgres_docker/
 
 ```env
 PUBLIC_BASE_URL=http://192.168.1.50:8080
+SECRET_KEY=ใส่รหัสลับของคุณตรงนี้ (แนะนำให้เป็นรหัสสุ่มยาวๆ)
 ```
 
 5. รัน:

@@ -12,8 +12,19 @@ const form = reactive({
   room_name: ''
 })
 
+const currentToken = localStorage.getItem('token')
+const getHeaders = () => {
+  const token = localStorage.getItem('token')
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`
+  }
+}
+
 async function loadRooms() {
-  const response = await fetch('/api/staff/rooms')
+  const response = await fetch('/api/staff/rooms', {
+    headers: getHeaders()
+  })
   const data = await response.json()
   rooms.value = data.rooms || []
 }
@@ -24,7 +35,7 @@ async function createRoom() {
 
   const response = await fetch('/api/staff/rooms', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify(form)
   })
   const data = await response.json()
@@ -44,7 +55,8 @@ async function createRoom() {
 
 async function toggleRoom(room) {
   const response = await fetch(`/api/staff/rooms/${room.id}/toggle`, {
-    method: 'PATCH'
+    method: 'PATCH',
+    headers: getHeaders()
   })
 
   if (response.ok) await loadRooms()
@@ -124,10 +136,10 @@ onMounted(loadRooms)
                   </span>
                 </td>
                 <td>
-                  <a :href="`/api/staff/rooms/${room.id}/qr`" target="_blank">
+                  <a :href="`/api/staff/rooms/${room.id}/qr?token=${currentToken}`" target="_blank">
                     <img
                       class="qr-image"
-                      :src="`/api/staff/rooms/${room.id}/qr`"
+                      :src="`/api/staff/rooms/${room.id}/qr?token=${currentToken}`"
                       :alt="`QR ห้อง ${room.room_number}`"
                     >
                   </a>
@@ -136,7 +148,7 @@ onMounted(loadRooms)
                   <div class="row-actions wrap">
                     <a
                       class="btn-soft"
-                      :href="`/api/staff/rooms/${room.id}/qr?download=1`"
+                      :href="`/api/staff/rooms/${room.id}/qr?download=1&token=${currentToken}`"
                     >
                       <i class="fa-solid fa-download"></i>
                       ดาวน์โหลด QR

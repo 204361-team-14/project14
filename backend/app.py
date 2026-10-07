@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
 import psycopg
 import qrcode
+import jwt
 from flask import Flask, jsonify, redirect, request, send_file, send_from_directory
 from flask_cors import CORS
+from functools import wraps
 from psycopg.rows import dict_row
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_FOLDER = Path(os.environ.get("UPLOAD_FOLDER", BASE_DIR / "uploads"))
@@ -43,8 +46,40 @@ LOST_FOUND_STATUSES = {
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
+
+# เพิ่มตั้งค่า SECRET_KEY สำหรับสร้าง Token
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
+if not app.config['SECRET_KEY']:
+    raise ValueError("ยังไม่ได้ตั้งค่า SECRET_KEY ใน Environment Variables")
+
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+        elif request.args.get('token'): 
+            token = request.args.get('token')
+            
+        if not token:
+            return jsonify({'message': 'กรุณาเข้าสู่ระบบ'}), 401
+        
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+            request.current_user = data
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'เซสชันหมดอายุ กรุณาล็อกอินใหม่'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'message': 'Token ไม่ถูกต้อง'}), 401
+            
+        return f(*args, **kwargs)
+        
+    return decorated
 
 
 def get_db():
@@ -72,6 +107,19 @@ def init_db():
 
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS users (
+                    id BIGSERIAL PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    email TEXT,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'technician',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS service_requests (
                     id BIGSERIAL PRIMARY KEY,
                     service_type TEXT NOT NULL,
@@ -85,6 +133,8 @@ def init_db():
                     problem_time TIME,
                     image_path TEXT,
                     status TEXT NOT NULL DEFAULT 'pending',
+                    assigned_to BIGINT REFERENCES users(id) ON DELETE SET NULL,
+                    completion_image_path TEXT,
                     staff_note TEXT,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP
@@ -149,6 +199,17 @@ def init_db():
                 )
                 """
             )
+
+            cur.execute("SELECT id FROM users WHERE username = 'admin'")
+            if not cur.fetchone():
+                hashed_pw = generate_password_hash('admin123')
+                cur.execute(
+                    """
+                    INSERT INTO users (username, password_hash, role) 
+                    VALUES (%s, %s, %s)
+                    """,
+                    ('admin', hashed_pw, 'admin')
+                )
 
 
 def serialize_row(row):
@@ -289,6 +350,43 @@ def delete_uploaded_image(filename):
     except OSError:
         pass
 
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if request.current_user.get('role') != 'admin':
+            if request.path.endswith('/qr'):
+                return "ไม่มีสิทธิ์เข้าถึง", 403
+            return jsonify({'message': 'ไม่มีสิทธิ์เข้าถึง'}), 403
+        return f(*args, **kwargs)
+    return decorated
+    
+
+@app.post("/api/login")
+def login():
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+
+    if not username or not password:
+        return jsonify({"message": "กรุณากรอกชื่อผู้ใช้งานและรหัสผ่าน"}), 400
+
+    with get_db() as conn:
+        user = conn.execute(
+            "SELECT id, username, password_hash, role FROM users WHERE username = %s",
+            (username,)
+        ).fetchone()
+
+        if user and check_password_hash(user["password_hash"], password):
+            token = jwt.encode({
+                "user_id": user["id"],
+                "username": user["username"],
+                "role": user["role"],
+                "exp": datetime.utcnow() + timedelta(hours=8)
+            }, app.config['SECRET_KEY'], algorithm="HS256")
+            
+            return jsonify({"token": token, "message": "เข้าสู่ระบบสำเร็จ"}), 200
+        else:
+            return jsonify({"message": "ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง"}), 401
 
 @app.get("/api/health")
 def health():
@@ -429,6 +527,8 @@ def create_request():
 
 
 @app.get("/api/staff/dashboard")
+@token_required
+@admin_required
 def staff_dashboard():
     with get_db() as conn:
         stats = {
@@ -460,14 +560,25 @@ def staff_dashboard():
 
 
 @app.get("/api/staff/requests")
+@token_required
 def list_requests():
     q = request.args.get("q", "").strip()
     status = request.args.get("status", "").strip()
     service_type = request.args.get("service_type", "").strip()
     urgency = request.args.get("urgency", "").strip()
 
-    sql = "SELECT * FROM service_requests WHERE TRUE"
+    sql = """
+        SELECT s.*, u.username as assigned_to_name 
+        FROM service_requests s 
+        LEFT JOIN users u ON s.assigned_to = u.id 
+        WHERE TRUE
+    """
     params = []
+    role = request.current_user.get('role')
+    if role == 'maid':
+        sql += " AND s.service_type = 'แจ้งทำความสะอาด'"  
+    elif role == 'technician':
+        sql += " AND s.service_type = 'แจ้งซ่อม'"
 
     if q:
         like = f"%{q}%"
@@ -487,8 +598,15 @@ def list_requests():
 
     with get_db() as conn:
         rows = conn.execute(sql, params).fetchall()
+
+        base_count_sql = "SELECT COUNT(*) AS count FROM service_requests WHERE TRUE"
+        if role == 'maid':
+            base_count_sql += " AND service_type = 'แจ้งทำความสะอาด'" 
+        elif role == 'technician':
+            base_count_sql += " AND service_type = 'แจ้งซ่อม'"
+
         stats = {
-            "all": conn.execute("SELECT COUNT(*) AS count FROM service_requests").fetchone()["count"],
+            "all": conn.execute(base_count_sql).fetchone()["count"],
             "pending": conn.execute("SELECT COUNT(*) AS count FROM service_requests WHERE status='pending'").fetchone()["count"],
             "in_progress": conn.execute("SELECT COUNT(*) AS count FROM service_requests WHERE status='in_progress'").fetchone()["count"],
             "completed": conn.execute("SELECT COUNT(*) AS count FROM service_requests WHERE status='completed'").fetchone()["count"],
@@ -504,12 +622,19 @@ def list_requests():
 
 
 @app.get("/api/staff/requests/<int:request_id>")
+@token_required
 def request_detail(request_id):
     with get_db() as conn:
         item = conn.execute(
-            "SELECT * FROM service_requests WHERE id = %s",
+            """
+            SELECT s.*, u.username as assigned_to_name 
+            FROM service_requests s 
+            LEFT JOIN users u ON s.assigned_to = u.id 
+            WHERE s.id = %s
+            """,
             (request_id,),
         ).fetchone()
+
         if item is None:
             return jsonify({"message": "ไม่พบคำขอบริการนี้"}), 404
 
@@ -535,11 +660,16 @@ def request_detail(request_id):
 
 
 @app.patch("/api/staff/requests/<int:request_id>/status")
+@token_required
 def update_request_status(request_id):
     data = request.get_json(silent=True) or {}
     new_status = data.get("status", "")
     if new_status not in REQUEST_STATUSES:
         return jsonify({"message": "สถานะไม่ถูกต้อง"}), 400
+
+    role = request.current_user.get('role')
+    if role in ['maid', 'technician'] and new_status == 'cancelled':
+        return jsonify({"message": "คุณไม่มีสิทธิ์ยกเลิกงานนี้ กรุณาติดต่อแอดมิน"}), 403
 
     now = datetime.now()
     with get_db() as conn:
@@ -571,6 +701,7 @@ def update_request_status(request_id):
 
 
 @app.patch("/api/staff/requests/<int:request_id>/note")
+@token_required
 def update_request_note(request_id):
     data = request.get_json(silent=True) or {}
     note = str(data.get("staff_note", "")).strip()
@@ -600,6 +731,8 @@ def update_request_note(request_id):
 
 
 @app.delete("/api/staff/requests/<int:request_id>")
+@token_required
+@admin_required
 def delete_completed_request(request_id):
     with get_db() as conn:
         item = conn.execute(
@@ -756,6 +889,8 @@ def create_lost_found():
 
 
 @app.get("/api/staff/lost-found")
+@token_required
+@admin_required
 def staff_lost_found():
     q = request.args.get("q", "").strip()
     status = request.args.get("status", "").strip()
@@ -785,6 +920,8 @@ def staff_lost_found():
 
 
 @app.get("/api/staff/lost-found/<int:item_id>")
+@token_required
+@admin_required
 def staff_lost_found_detail(item_id):
     with get_db() as conn:
         item = conn.execute(
@@ -810,6 +947,8 @@ def staff_lost_found_detail(item_id):
 
 
 @app.patch("/api/staff/lost-found/<int:item_id>/status")
+@token_required
+@admin_required
 def update_lost_found_status(item_id):
     data = request.get_json(silent=True) or {}
     status = data.get("status", "")
@@ -834,6 +973,8 @@ def update_lost_found_status(item_id):
 
 
 @app.get("/api/staff/rooms")
+@token_required
+@admin_required
 def list_rooms():
     with get_db() as conn:
         rooms = conn.execute(
@@ -844,6 +985,8 @@ def list_rooms():
 
 
 @app.post("/api/staff/rooms")
+@token_required
+@admin_required
 def create_room():
     data = request.get_json(silent=True) or {}
     building = str(data.get("building", "")).strip()
@@ -877,6 +1020,8 @@ def create_room():
 
 
 @app.patch("/api/staff/rooms/<int:room_id>/toggle")
+@token_required
+@admin_required
 def toggle_room(room_id):
     with get_db() as conn:
         room = conn.execute(
@@ -895,6 +1040,8 @@ def toggle_room(room_id):
 
 
 @app.get("/api/staff/rooms/<int:room_id>/qr")
+@token_required
+@admin_required
 def room_qr_image(room_id):
     with get_db() as conn:
         room = conn.execute(
@@ -920,6 +1067,198 @@ def room_qr_image(room_id):
         download_name=filename,
     )
 
+
+@app.get("/api/staff/users")
+@token_required
+@admin_required
+def list_users():
+    with get_db() as conn:
+        users = conn.execute(
+            "SELECT id, username, email, role, created_at FROM users ORDER BY id ASC"
+        ).fetchall()
+        
+    return jsonify({"users": [serialize_row(row) for row in users]})
+
+
+@app.post("/api/staff/users")
+@token_required
+@admin_required
+def create_user():
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip()
+    email = str(data.get("email", "")).strip()
+    password = str(data.get("password", "")).strip()
+    role = str(data.get("role", "technician")).strip()
+
+    if not username or not password:
+        return jsonify({"message": "กรุณากรอกชื่อผู้ใช้งานและรหัสผ่าน"}), 400
+
+    if len(password) < 6:
+        return jsonify({"message": "รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร"}), 400
+
+    if role not in ['admin', 'technician', 'maid']:
+        return jsonify({"message": "ตำแหน่งไม่ถูกต้อง"}), 400
+
+    hashed_pw = generate_password_hash(password)
+
+    try:
+        with get_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO users (username, email, password_hash, role)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (username, email, hashed_pw, role)
+            )
+    except psycopg.errors.UniqueViolation:
+        return jsonify({"message": "มีชื่อผู้ใช้งานนี้อยู่ในระบบแล้ว กรุณาใช้ชื่ออื่น"}), 409
+
+    return jsonify({"success": True}), 201
+
+
+@app.put("/api/staff/users/<int:user_id>")
+@token_required
+@admin_required
+def edit_staff_user(user_id):
+    data = request.get_json(silent=True) or {}
+    new_username = str(data.get("username", "")).strip()
+    new_email = str(data.get("email", "")).strip()
+    new_password = str(data.get("password", "")).strip()
+
+    if not new_username:
+        return jsonify({"message": "กรุณากรอกชื่อผู้ใช้งาน"}), 400
+
+    with get_db() as conn:
+        target_user = conn.execute("SELECT username FROM users WHERE id = %s", (user_id,)).fetchone()
+        
+        if not target_user:
+            return jsonify({"message": "ไม่พบผู้ใช้งานนี้"}), 404
+
+        if target_user["username"] == 'admin' and new_username != 'admin':
+            return jsonify({"message": "ไม่อนุญาตให้เปลี่ยนชื่อบัญชีของ admin หลักได้"}), 403
+
+        try:
+            if new_password:
+                if len(new_password) < 6:
+                    return jsonify({"message": "รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร"}), 400
+                hashed_pw = generate_password_hash(new_password)
+                conn.execute(
+                    "UPDATE users SET username = %s, email = %s, password_hash = %s WHERE id = %s",
+                    (new_username, new_email, hashed_pw, user_id)
+                )
+            else:
+                conn.execute(
+                    "UPDATE users SET username = %s, email = %s WHERE id = %s",
+                    (new_username, new_email, user_id)
+                )
+        except psycopg.errors.UniqueViolation:
+            return jsonify({"message": "ชื่อผู้ใช้งานนี้ถูกใช้ไปแล้ว กรุณาตั้งชื่ออื่น"}), 409
+
+    return jsonify({"success": True})
+
+
+@app.patch("/api/staff/users/<int:user_id>/role")
+@token_required
+@admin_required
+def update_user_role(user_id):
+    data = request.get_json(silent=True) or {}
+    role = str(data.get("role", "")).strip()
+    if role not in ['admin', 'technician', 'maid']:
+        return jsonify({"message": "ตำแหน่งไม่ถูกต้อง"}), 400
+
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE users SET role = %s WHERE id = %s",
+            (role, user_id)
+        )
+    return jsonify({"success": True})
+
+
+@app.delete("/api/staff/users/<int:user_id>")
+@token_required
+@admin_required
+def delete_staff_user(user_id):
+    with get_db() as conn:
+        user = conn.execute("SELECT username FROM users WHERE id = %s", (user_id,)).fetchone()
+        
+        if not user:
+            return jsonify({"message": "ไม่พบผู้ใช้งานนี้"}), 404
+            
+        if user["username"] == request.current_user['username']:
+            return jsonify({"message": "ไม่สามารถลบบัญชีตัวเองขณะล็อกอินได้"}), 403
+            
+        conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    return jsonify({"success": True})
+
+@app.get("/api/staff/list")
+@token_required
+def get_staff_list():
+    with get_db() as conn:
+        # ดึงเฉพาะคนที่ไม่ได้เป็นแอดมิน เพื่อเอาไปแสดงใน Dropdown จ่ายงาน
+        staff = conn.execute(
+            "SELECT id, username, role FROM users WHERE role IN ('technician', 'maid') ORDER BY role, username"
+        ).fetchall()
+    return jsonify({"staff": [serialize_row(row) for row in staff]})
+
+@app.patch("/api/staff/requests/<int:request_id>/assign")
+@token_required
+@admin_required
+def assign_request(request_id):
+    data = request.get_json(silent=True) or {}
+    staff_id = data.get("staff_id") # ถ้าส่งมาเป็น null คือการยกเลิกการจ่ายงาน
+    
+    now = datetime.now()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE service_requests SET assigned_to=%s, updated_at=%s WHERE id=%s",
+            (staff_id, now, request_id)
+        )
+        
+        # บันทึกประวัติ
+        if staff_id:
+            staff = conn.execute("SELECT username FROM users WHERE id=%s", (staff_id,)).fetchone()
+            detail = f"มอบหมายงานให้ {staff['username']}" if staff else "มอบหมายงาน"
+        else:
+            detail = "ยกเลิกการมอบหมายงาน"
+            
+        conn.execute(
+            "INSERT INTO request_history (request_id, action, detail, created_at) VALUES (%s, 'assign', %s, %s)",
+            (request_id, detail, now)
+        )
+        
+    return jsonify({"success": True})
+
+@app.post("/api/staff/requests/<int:request_id>/complete")
+@token_required
+def complete_request(request_id):
+    try:
+        # ใช้ฟังก์ชันเซฟไฟล์รูปเดิมที่เรามีอยู่แล้ว
+        uploaded_images = save_uploaded_images(get_uploaded_image_files(), "proof")
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+        
+    image_path = uploaded_images[0] if uploaded_images else None
+    
+    now = datetime.now()
+    with get_db() as conn:
+        # อัปเดตสถานะเป็น completed และบันทึกชื่อไฟล์รูป
+        conn.execute(
+            """
+            UPDATE service_requests 
+            SET status='completed', completion_image_path=%s, updated_at=%s 
+            WHERE id=%s
+            """,
+            (image_path, now, request_id)
+        )
+        # บันทึกประวัติ
+        conn.execute(
+            """
+            INSERT INTO request_history (request_id, action, detail, created_at) 
+            VALUES (%s, 'status', 'เสร็จสิ้น (แนบรูปหลักฐาน)', %s)
+            """,
+            (request_id, now)
+        )
+    return jsonify({"success": True})
 
 @app.errorhandler(413)
 def too_large(_):
