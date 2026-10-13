@@ -599,6 +599,13 @@ p {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+@media (max-width: 768px) {
+  .stats-grid.five,
+  .stats-grid.four {
+    grid-template-columns: repeat(2, minmax(0, 1fr))!important;
+  }
+}
+
 .stat-card {
   background: white;
   border: 1px solid var(--line);
@@ -3154,4 +3161,52 @@ td,
 
 .not-assigned-text {
   text-align: center;
+}
+
+.staff-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 1.5rem;
+}
+
+.staff-user-info .user-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background-color: rgba(255, 255, 255, 0.1);
+  padding: 0.5rem 1rem;
+  border-radius: 50px;
+  color: white; 
+}
+
+.staff-user-info i {
+  font-size: 1.5rem;
+}
+
+.staff-user-info span {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.role-text {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.menu-divider {
+  border: none;
+  border-top: 1px solid rgba(0, 0, 0, 0.1); 
+  margin: 1rem 0;
+}
+
+/* ตกแต่งปุ่ม Logout */
+.logout-btn {
+  color: #dc3545 !important; 
+  font-weight: bold;
+}
+
+.logout-btn:hover {
+  background-color: #fee2e2 !important; 
 }
