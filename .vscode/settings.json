@@ -1,0 +1,15 @@
+{
+    "sqltools.connections": [
+        {
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 5432,
+            "driver": "PostgreSQL",
+            "database": "cs_building_services",
+            "username": "cs_user",
+            "password": "cs_password",
+            "name": "Project 14 DB"
+        }
+    ]
+}
