@@ -3,90 +3,60 @@ import { onMounted, ref } from 'vue'
 import PublicHeader from '../components/PublicHeader.vue'
 import PublicFooter from '../components/PublicFooter.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { useImageUploader } from '../composables/useImageUploader'
+import { todayString } from '../utils/format'
 
 const q = ref('')
 const items = ref([])
 const statuses = ref({})
 const message = ref('')
+const listError = ref('')
 const submitting = ref(false)
 const formRef = ref(null)
-const foundImageFiles = ref([])
-const foundImagePreviews = ref([])
 const foundDate = ref('')
+const maxDate = todayString()
+
+const {
+  previews: foundImagePreviews,
+  files: foundImageFiles,
+  notice: imageNotice,
+  onChange: onFoundImageChange,
+  remove: removeFoundImage,
+  clear: clearFoundImages
+} = useImageUploader(6)
 
 function setCurrentFoundDate() {
-  const now = new Date()
-
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-
-  foundDate.value = `${year}-${month}-${day}`
-}
-
-function rebuildFoundImagePreviews() {
-  foundImagePreviews.value.forEach((preview) => {
-    URL.revokeObjectURL(preview.url)
-  })
-
-  foundImagePreviews.value = foundImageFiles.value.map((file) => ({
-    name: file.name,
-    url: URL.createObjectURL(file)
-  }))
-}
-
-function clearFoundImagePreviews() {
-  foundImagePreviews.value.forEach((preview) => {
-    URL.revokeObjectURL(preview.url)
-  })
-
-  foundImageFiles.value = []
-  foundImagePreviews.value = []
-}
-
-function onFoundImageChange(event) {
-  const selected = Array.from(event.target.files || [])
-
-  const existingKeys = new Set(
-    foundImageFiles.value.map(
-      (file) => `${file.name}-${file.size}-${file.lastModified}`
-    )
-  )
-
-  for (const file of selected) {
-    const key = `${file.name}-${file.size}-${file.lastModified}`
-
-    if (!existingKeys.has(key) && foundImageFiles.value.length < 6) {
-      foundImageFiles.value.push(file)
-      existingKeys.add(key)
-    }
-  }
-
-  rebuildFoundImagePreviews()
-  event.target.value = ''
-}
-
-function removeFoundImage(index) {
-  foundImageFiles.value.splice(index, 1)
-  rebuildFoundImagePreviews()
+  foundDate.value = todayString()
 }
 
 async function loadItems() {
-  const params = new URLSearchParams()
-  if (q.value.trim()) params.set('q', q.value.trim())
+  listError.value = ''
 
-  const response = await fetch(`/api/lost-found?${params}`)
-  const data = await response.json()
-  items.value = data.items || []
-  statuses.value = data.statuses || {}
+  try {
+    const params = new URLSearchParams()
+    if (q.value.trim()) params.set('q', q.value.trim())
+
+    const response = await fetch(`/api/lost-found?${params}`)
+    if (!response.ok) throw new Error('load failed')
+
+    const data = await response.json()
+    items.value = data.items || []
+    statuses.value = data.statuses || {}
+  } catch {
+    listError.value = 'ไม่สามารถโหลดรายการได้ กรุณาลองใหม่อีกครั้ง'
+  }
 }
 
-async function submitFoundItem(event) {
+async function submitFoundItem() {
+  if (submitting.value) return
+
   message.value = ''
   submitting.value = true
 
   try {
-    const formData = new FormData(event.currentTarget)
+    // อ่าน form จาก ref แทน event.currentTarget (ซึ่งเป็น null หลัง await)
+    const form = formRef.value
+    const formData = new FormData(form)
 
     formData.delete('images')
     foundImageFiles.value.forEach((file) => {
@@ -97,19 +67,23 @@ async function submitFoundItem(event) {
       method: 'POST',
       body: formData
     })
-    const data = await response.json()
+    const data = await response.json().catch(() => ({}))
 
     if (!response.ok || !data.success) {
       message.value = data.message || 'ไม่สามารถบันทึกรายการได้'
       return
     }
 
+    form.reset()
+    // reset() ล้างช่องวันที่ด้วย ต้องใส่ค่าวันนี้กลับเข้าไปทั้ง state และ DOM
+    setCurrentFoundDate()
+    form.elements.event_date.value = foundDate.value
+    clearFoundImages()
+
     message.value = 'บันทึกรายการของที่เก็บได้เรียบร้อยแล้ว'
-    event.currentTarget.reset()
-
-    clearFoundImagePreviews()
-
     await loadItems()
+  } catch {
+    message.value = 'ไม่สามารถเชื่อมต่อกับระบบได้'
   } finally {
     submitting.value = false
   }
@@ -145,38 +119,49 @@ onMounted(() => {
 
           <form ref="formRef" class="form-grid" @submit.prevent="submitFoundItem">
             <div class="field">
-              <label>ชื่อสิ่งของ *</label>
-              <input name="item_name" required placeholder="เช่น กระเป๋าสตางค์">
+              <label for="lf-item-name">ชื่อสิ่งของ *</label>
+              <input id="lf-item-name" name="item_name" required placeholder="เช่น กระเป๋าสตางค์">
             </div>
 
             <div class="field">
-              <label>หมวดหมู่</label>
-              <input name="category" placeholder="เช่น อุปกรณ์อิเล็กทรอนิกส์">
+              <label for="lf-category">หมวดหมู่</label>
+              <input id="lf-category" name="category" placeholder="เช่น อุปกรณ์อิเล็กทรอนิกส์">
             </div>
 
             <div class="field">
-              <label>วันที่พบ</label>
-              <input v-model="foundDate" name="event_date" type="date">
+              <label for="lf-date">วันที่พบ</label>
+              <input
+                id="lf-date"
+                v-model="foundDate"
+                name="event_date"
+                type="date"
+                :max="maxDate"
+              >
             </div>
 
             <div class="field full">
-              <label>สถานที่พบ</label>
-              <input name="location" placeholder="เช่น CSB ชั้น 3 ห้อง 301">
+              <label for="lf-location">สถานที่พบ</label>
+              <input id="lf-location" name="location" placeholder="เช่น CSB ชั้น 3 ห้อง 301">
             </div>
 
             <div class="field full">
-              <label>รายละเอียด *</label>
-              <textarea name="description" required placeholder="สี ลักษณะ จุดสังเกต..."></textarea>
+              <label for="lf-description">รายละเอียด *</label>
+              <textarea
+                id="lf-description"
+                name="description"
+                required
+                placeholder="สี ลักษณะ จุดสังเกต..."
+              ></textarea>
             </div>
 
             <div class="field">
-              <label>ชื่อผู้ติดต่อ</label>
-              <input name="contact_name">
+              <label for="lf-contact-name">ชื่อผู้ติดต่อ</label>
+              <input id="lf-contact-name" name="contact_name">
             </div>
 
             <div class="field">
-              <label>ช่องทางติดต่อ</label>
-              <input name="contact_info" placeholder="เบอร์โทร / Line / Email">
+              <label for="lf-contact-info">ช่องทางติดต่อ</label>
+              <input id="lf-contact-info" name="contact_info" placeholder="เบอร์โทร / Line / Email">
             </div>
 
             <div class="field full">
@@ -228,6 +213,10 @@ onMounted(() => {
                 เลือกแล้ว {{ foundImagePreviews.length }}/6 รูป
                 สามารถกด “เพิ่มรูปภาพ” เพื่อเพิ่มทีละชุดได้
               </small>
+
+              <small v-if="imageNotice" class="multi-image-count" role="alert">
+                {{ imageNotice }}
+              </small>
             </div>
 
             <div class="full">
@@ -237,7 +226,7 @@ onMounted(() => {
             </div>
           </form>
 
-          <p v-if="message" class="form-message">{{ message }}</p>
+          <p v-if="message" class="form-message" role="status">{{ message }}</p>
         </section>
 
         <section class="card">
@@ -248,10 +237,12 @@ onMounted(() => {
             </div>
 
             <form class="search-row" @submit.prevent="loadItems">
-              <input v-model="q" placeholder="ค้นหา...">
+              <input v-model="q" placeholder="ค้นหา..." aria-label="ค้นหา">
               <button class="btn-primary">ค้นหา</button>
             </form>
           </div>
+
+          <p v-if="listError" class="form-message" role="alert">{{ listError }}</p>
 
           <div class="found-items">
             <article v-for="item in items" :key="item.id" class="found-item">
@@ -284,7 +275,7 @@ onMounted(() => {
               </div>
             </article>
 
-            <p v-if="!items.length" class="muted">ยังไม่มีรายการ</p>
+            <p v-if="!items.length && !listError" class="muted">ยังไม่มีรายการ</p>
           </div>
         </section>
       </div>

@@ -11,21 +11,34 @@ const router = useRouter()
 const item = ref(null)
 const statuses = ref({})
 const activeImage = ref('')
+const loading = ref(true)
+const loadError = ref('')
 
 async function loadDetail() {
-  const response = await fetch(`/api/lost-found/${route.params.id}`)
+  loading.value = true
+  loadError.value = ''
 
-  if (!response.ok) {
-    router.replace('/lost-found')
-    return
+  try {
+    const response = await fetch(`/api/lost-found/${route.params.id}`)
+
+    if (response.status === 404) {
+      router.replace('/lost-found')
+      return
+    }
+
+    if (!response.ok) throw new Error('load failed')
+
+    const data = await response.json()
+    item.value = data.item
+    statuses.value = data.statuses || {}
+
+    const images = item.value.images || []
+    activeImage.value = images[0] || item.value.image_path || ''
+  } catch {
+    loadError.value = 'ไม่สามารถโหลดรายละเอียดได้ กรุณาลองใหม่อีกครั้ง'
+  } finally {
+    loading.value = false
   }
-
-  const data = await response.json()
-  item.value = data.item
-  statuses.value = data.statuses || {}
-
-  const images = item.value.images || []
-  activeImage.value = images[0] || item.value.image_path || ''
 }
 
 onMounted(loadDetail)
@@ -41,7 +54,14 @@ onMounted(loadDetail)
         กลับรายการของหาย-ของได้คืน
       </RouterLink>
 
-      <template v-if="item">
+      <p v-if="loading" class="muted" role="status">กำลังโหลด...</p>
+
+      <div v-else-if="loadError" class="card">
+        <p class="form-message" role="alert">{{ loadError }}</p>
+        <button class="btn-primary" type="button" @click="loadDetail">ลองใหม่</button>
+      </div>
+
+      <template v-else-if="item">
         <div class="page-title">
           <span class="eyebrow">LOST & FOUND</span>
           <h1>{{ item.item_name }}</h1>
@@ -74,6 +94,7 @@ onMounted(loadDetail)
                 :key="image"
                 type="button"
                 :class="{ active: activeImage === image }"
+                :aria-pressed="activeImage === image"
                 @click="activeImage = image"
               >
                 <img

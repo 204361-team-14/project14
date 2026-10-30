@@ -1495,8 +1495,6 @@ td,
   }
 }
 
-/* ---------- Tablet / narrow laptop ---------- */
-
 @media (max-width: 960px) {
   .public-header,
   .home-page .public-header {
@@ -1621,8 +1619,6 @@ td,
   }
 }
 
-/* ---------- Phone / portrait tablet ---------- */
-
 @media (max-width: 700px) {
   .public-header,
   .home-page .public-header {
@@ -1707,6 +1703,7 @@ td,
   .home-page .service-card:last-child {
     grid-column: auto;
     width: auto;
+    justify-self: stretch; 
   }
 
   .service-card,
@@ -1836,7 +1833,6 @@ td,
   }
 }
 
-/* ---------- Small phones ---------- */
 
 @media (max-width: 440px) {
   .public-brand,
@@ -1890,11 +1886,6 @@ td,
     min-width: 640px;
   }
 }
-
-
-/* ============================================================
-   REQUEST FLOW - RESTORED DESIGN
-============================================================ */
 
 .request-flow-page {
   min-height: 100vh;
@@ -2474,11 +2465,6 @@ td,
   }
 }
 
-
-/* ============================================================
-   MULTI IMAGE + PUBLIC FOUND DETAIL
-============================================================ */
-
 .multi-upload-box {
   width: 140px;
   min-height: 110px;
@@ -2715,11 +2701,6 @@ td,
   }
 }
 
-
-/* ============================================================
-   MULTI IMAGE ROBUST CONTROLS
-============================================================ */
-
 .image-preview-card {
   position: relative;
 }
@@ -2767,11 +2748,6 @@ td,
   line-height: 1.5;
 }
 
-
-/* ============================================================
-   ADMIN IMAGE LIGHTBOX
-============================================================ */
-
 .staff-image-button {
   width: 100%;
   padding: 0;
@@ -2810,6 +2786,7 @@ td,
 }
 
 .image-lightbox-content {
+  grid-column: 2; /* ต้องอยู่คอลัมน์กลางเสมอ แม้มีรูปเดียวและไม่มีปุ่มก่อนหน้า/ถัดไป */
   min-width: 0;
   margin: 0;
   text-align: center;

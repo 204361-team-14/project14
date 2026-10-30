@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 
 import PublicHeader from '../components/PublicHeader.vue'
 import PublicFooter from '../components/PublicFooter.vue'
+import { useImageUploader } from '../composables/useImageUploader'
+import { formatId, timeString, todayString } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -13,12 +15,20 @@ const description = ref('')
 const urgency = ref('ปกติ')
 const problemDate = ref('')
 const problemTime = ref('')
-const imageFiles = ref([])
-const imagePreviews = ref([])
 const submitting = ref(false)
 const message = ref('')
 const successId = ref(null)
 const showLocationEditor = ref(false)
+const editorError = ref('')
+const maxDate = todayString()
+
+const {
+  previews: imagePreviews,
+  files: imageFiles,
+  notice: imageNotice,
+  onChange: onImageChange,
+  remove: removeImage
+} = useImageUploader(6)
 
 const serviceChoice = ref(
   route.meta.serviceType === 'แจ้งทำความสะอาด'
@@ -40,17 +50,23 @@ const descriptionPlaceholder = computed(() => (
     : 'อธิบายรายละเอียด เช่น อาการของปัญหา สิ่งที่ต้องการให้ดำเนินการ'
 ))
 
+// ค่าเริ่มต้นเป็นว่าง: ถ้าไม่ได้สแกน QR ผู้ใช้ต้องระบุห้องเอง
+// (เดิม hardcode เป็น CSB/3/301 ทำให้คำขอไปผิดห้องโดยไม่รู้ตัว)
+// สถานะการสแกน QR: '' (ไม่ได้สแกน) | 'found' | 'notfound' | 'error'
+const qrStatus = ref('')
+
 const qrRoom = reactive({
-  building: 'CSB',
-  floor: '3',
-  room: '301',
+  building: '',
+  floor: '',
+  room: '',
   room_name: ''
 })
 
-const location = reactive({
-  building: 'CSB',
-  floor: '3',
-  room: '301',
+// เปลี่ยนชื่อจาก location เพื่อไม่ให้บัง window.location
+const roomLocation = reactive({
+  building: '',
+  floor: '',
+  room: '',
   room_name: ''
 })
 
@@ -60,17 +76,18 @@ const editLocation = reactive({
   room: ''
 })
 
+const hasLocation = computed(() => (
+  Boolean(
+    roomLocation.building.trim() &&
+    roomLocation.floor.trim() &&
+    roomLocation.room.trim()
+  )
+))
+
 function setCurrentDateTime() {
   const now = new Date()
-
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  const hour = String(now.getHours()).padStart(2, '0')
-  const minute = String(now.getMinutes()).padStart(2, '0')
-
-  problemDate.value = `${year}-${month}-${day}`
-  problemTime.value = `${hour}:${minute}`
+  problemDate.value = todayString(now)
+  problemTime.value = timeString(now)
 }
 
 function changeServiceType() {
@@ -86,15 +103,26 @@ function changeServiceType() {
   })
 }
 
+// ไปหน้าของหาย-ของได้คืนโดยพกรหัสห้องจาก QR ไปด้วย
+const lostFoundLink = computed(() => ({
+  path: '/lost-found',
+  query: route.query.room ? { room: route.query.room } : {}
+}))
+
 function setUrgency(value) {
   urgency.value = value
 }
 
 function openLocationEditor() {
-  editLocation.building = location.building
-  editLocation.floor = location.floor
-  editLocation.room = location.room
+  editLocation.building = roomLocation.building
+  editLocation.floor = roomLocation.floor
+  editLocation.room = roomLocation.room
+  editorError.value = ''
   showLocationEditor.value = true
+}
+
+function closeLocationEditor() {
+  showLocationEditor.value = false
 }
 
 function saveLocation() {
@@ -103,59 +131,22 @@ function saveLocation() {
     !editLocation.floor.trim() ||
     !editLocation.room.trim()
   ) {
-    alert('กรุณาระบุอาคาร ชั้น และห้องให้ครบ')
+    editorError.value = 'กรุณาระบุอาคาร ชั้น และห้องให้ครบ'
     return
   }
 
-  location.building = editLocation.building.trim()
-  location.floor = editLocation.floor.trim()
-  location.room = editLocation.room.trim()
+  roomLocation.building = editLocation.building.trim()
+  roomLocation.floor = editLocation.floor.trim()
+  roomLocation.room = editLocation.room.trim()
 
-  location.room_name = (
-    location.building === qrRoom.building &&
-    location.floor === qrRoom.floor &&
-    location.room === qrRoom.room
+  roomLocation.room_name = (
+    roomLocation.building === qrRoom.building &&
+    roomLocation.floor === qrRoom.floor &&
+    roomLocation.room === qrRoom.room
   ) ? qrRoom.room_name : ''
 
+  editorError.value = ''
   showLocationEditor.value = false
-}
-
-function rebuildImagePreviews() {
-  imagePreviews.value.forEach((preview) => {
-    URL.revokeObjectURL(preview.url)
-  })
-
-  imagePreviews.value = imageFiles.value.map((file) => ({
-    name: file.name,
-    url: URL.createObjectURL(file)
-  }))
-}
-
-function onImageChange(event) {
-  const selected = Array.from(event.target.files || [])
-
-  const existingKeys = new Set(
-    imageFiles.value.map(
-      (file) => `${file.name}-${file.size}-${file.lastModified}`
-    )
-  )
-
-  for (const file of selected) {
-    const key = `${file.name}-${file.size}-${file.lastModified}`
-
-    if (!existingKeys.has(key) && imageFiles.value.length < 6) {
-      imageFiles.value.push(file)
-      existingKeys.add(key)
-    }
-  }
-
-  rebuildImagePreviews()
-  event.target.value = ''
-}
-
-function removeImage(index) {
-  imageFiles.value.splice(index, 1)
-  rebuildImagePreviews()
 }
 
 function validateStepOne() {
@@ -163,6 +154,16 @@ function validateStepOne() {
 
   if (!description.value.trim() || !problemDate.value) {
     message.value = 'กรุณากรอกรายละเอียดและวันที่พบปัญหาให้ครบ'
+    return false
+  }
+
+  if (problemDate.value > maxDate) {
+    message.value = 'วันที่พบปัญหาต้องไม่เป็นวันในอนาคต'
+    return false
+  }
+
+  if (!hasLocation.value) {
+    message.value = 'กรุณาระบุตำแหน่ง (อาคาร ชั้น ห้อง) ก่อนดำเนินการต่อ'
     return false
   }
 
@@ -182,6 +183,8 @@ function backToForm() {
 }
 
 async function submitRequest() {
+  if (submitting.value) return
+
   if (!validateStepOne()) {
     step.value = 1
     return
@@ -193,9 +196,9 @@ async function submitRequest() {
   form.append('urgency', urgency.value)
   form.append('problem_date', problemDate.value)
   form.append('problem_time', problemTime.value)
-  form.append('building', location.building)
-  form.append('floor', location.floor)
-  form.append('room', location.room)
+  form.append('building', roomLocation.building)
+  form.append('floor', roomLocation.floor)
+  form.append('room', roomLocation.room)
 
   imageFiles.value.forEach((file) => {
     form.append('images', file)
@@ -210,7 +213,7 @@ async function submitRequest() {
       body: form
     })
 
-    const data = await response.json()
+    const data = await response.json().catch(() => ({}))
 
     if (!response.ok || !data.success) {
       message.value = data.message || 'ไม่สามารถส่งคำขอได้'
@@ -230,14 +233,20 @@ async function submitRequest() {
 async function resolveQrRoom() {
   const qrCode = String(route.query.room || '').trim()
 
-  if (!qrCode) return
+  if (!qrCode) {
+    qrStatus.value = ''
+    return
+  }
 
   try {
     const response = await fetch(
       `/api/rooms/resolve/${encodeURIComponent(qrCode)}`
     )
 
-    if (!response.ok) return
+    if (!response.ok) {
+      qrStatus.value = response.status === 404 ? 'notfound' : 'error'
+      return
+    }
 
     const data = await response.json()
     const room = data.room
@@ -247,12 +256,14 @@ async function resolveQrRoom() {
     qrRoom.room = room.room_number
     qrRoom.room_name = room.room_name || ''
 
-    location.building = room.building
-    location.floor = room.floor
-    location.room = room.room_number
-    location.room_name = room.room_name || ''
+    roomLocation.building = room.building
+    roomLocation.floor = room.floor
+    roomLocation.room = room.room_number
+    roomLocation.room_name = room.room_name || ''
+    qrStatus.value = 'found'
   } catch {
-    // ผู้ใช้ยังสามารถแก้ไขห้องเองได้
+    // ผู้ใช้ยังสามารถระบุห้องเองได้
+    qrStatus.value = 'error'
   }
 }
 
@@ -325,6 +336,24 @@ onMounted(() => {
         </div>
       </section>
 
+      <!-- แจ้งผลการสแกน QR (เฉพาะขั้นกรอกข้อมูล) -->
+      <template v-if="step === 1">
+        <p v-if="qrStatus === 'found'" class="flash success" role="status">
+          <i class="fa-solid fa-qrcode"></i>
+          ตรวจพบห้องจาก QR:
+          อาคาร {{ qrRoom.building }} · ชั้น {{ qrRoom.floor }} · ห้อง {{ qrRoom.room }}
+          <template v-if="qrRoom.room_name">({{ qrRoom.room_name }})</template>
+        </p>
+
+        <p v-else-if="qrStatus === 'notfound'" class="flash error" role="alert">
+          ไม่พบห้องจาก QR นี้ กรุณากด “ระบุห้อง” เพื่อกรอกตำแหน่งเอง
+        </p>
+
+        <p v-else-if="qrStatus === 'error'" class="flash error" role="alert">
+          โหลดข้อมูลห้องจาก QR ไม่สำเร็จ กรุณากด “ระบุห้อง” เพื่อกรอกตำแหน่งเอง
+        </p>
+      </template>
+
       <!-- STEP 1 -->
       <section v-if="step === 1" class="request-main-layout">
         <div class="card request-form-card">
@@ -332,35 +361,42 @@ onMounted(() => {
 
           <div class="request-form-grid">
             <div class="field">
-              <label>ประเภทบริการ <span class="required">*</span></label>
+              <label for="req-service">ประเภทบริการ <span class="required">*</span></label>
 
               <select
+                id="req-service"
                 v-model="serviceChoice"
                 @change="changeServiceType"
               >
                 <option value="แจ้งซ่อม">แจ้งซ่อม</option>
                 <option value="แจ้งทำความสะอาด">แจ้งทำความสะอาด</option>
               </select>
+
+              <RouterLink class="btn-outline lost-found-shortcut" :to="lostFoundLink">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                ของหาย-ของได้คืน
+              </RouterLink>
             </div>
 
             <div class="field">
-              <label>รายละเอียดคำขอ <span class="required">*</span></label>
+              <label for="req-description">รายละเอียดคำขอ <span class="required">*</span></label>
 
               <textarea
+                id="req-description"
                 v-model="description"
                 :placeholder="descriptionPlaceholder"
-                required
               ></textarea>
             </div>
 
             <div class="field full">
-              <label>ระดับความเร่งด่วน <span class="required">*</span></label>
+              <label id="req-urgency-label">ระดับความเร่งด่วน <span class="required">*</span></label>
 
-              <div class="urgency-options">
+              <div class="urgency-options" role="group" aria-labelledby="req-urgency-label">
                 <button
                   type="button"
                   class="urgency-option urgent"
                   :class="{ selected: urgency === 'เร่งด่วน' }"
+                  :aria-pressed="urgency === 'เร่งด่วน'"
                   @click="setUrgency('เร่งด่วน')"
                 >
                   <span></span>
@@ -371,6 +407,7 @@ onMounted(() => {
                   type="button"
                   class="urgency-option normal"
                   :class="{ selected: urgency === 'ปกติ' }"
+                  :aria-pressed="urgency === 'ปกติ'"
                   @click="setUrgency('ปกติ')"
                 >
                   <span></span>
@@ -381,6 +418,7 @@ onMounted(() => {
                   type="button"
                   class="urgency-option noturgent"
                   :class="{ selected: urgency === 'ไม่เร่งด่วน' }"
+                  :aria-pressed="urgency === 'ไม่เร่งด่วน'"
                   @click="setUrgency('ไม่เร่งด่วน')"
                 >
                   <span></span>
@@ -390,13 +428,13 @@ onMounted(() => {
             </div>
 
             <div class="field">
-              <label>วันที่พบปัญหา <span class="required">*</span></label>
-              <input v-model="problemDate" type="date" required>
+              <label for="req-date">วันที่พบปัญหา <span class="required">*</span></label>
+              <input id="req-date" v-model="problemDate" type="date" :max="maxDate">
             </div>
 
             <div class="field">
-              <label>เวลาที่พบปัญหา</label>
-              <input v-model="problemTime" type="time">
+              <label for="req-time">เวลาที่พบปัญหา</label>
+              <input id="req-time" v-model="problemTime" type="time">
             </div>
 
             <div class="field full">
@@ -448,6 +486,10 @@ onMounted(() => {
                 เลือกแล้ว {{ imagePreviews.length }}/6 รูป
                 สามารถกด “เพิ่มรูปภาพ” เพื่อเพิ่มทีละชุดได้
               </small>
+
+              <small v-if="imageNotice" class="multi-image-count" role="alert">
+                {{ imageNotice }}
+              </small>
             </div>
           </div>
 
@@ -469,7 +511,7 @@ onMounted(() => {
             </button>
           </div>
 
-          <p v-if="message" class="form-message">{{ message }}</p>
+          <p v-if="message" class="form-message" role="alert">{{ message }}</p>
         </div>
 
         <aside class="request-side-column">
@@ -484,11 +526,16 @@ onMounted(() => {
                 <i class="fa-solid fa-building"></i>
               </div>
 
-              <div>
-                <strong>อาคาร {{ location.building }}</strong>
-                <span>ชั้น {{ location.floor }}</span>
-                <span>ห้อง {{ location.room }}</span>
-                <small v-if="location.room_name">{{ location.room_name }}</small>
+              <div v-if="hasLocation">
+                <strong>อาคาร {{ roomLocation.building }}</strong>
+                <span>ชั้น {{ roomLocation.floor }}</span>
+                <span>ห้อง {{ roomLocation.room }}</span>
+                <small v-if="roomLocation.room_name">{{ roomLocation.room_name }}</small>
+              </div>
+
+              <div v-else>
+                <strong>ยังไม่ได้ระบุตำแหน่ง</strong>
+                <span>สแกน QR ที่ห้อง หรือกด “ระบุห้อง”</span>
               </div>
             </div>
 
@@ -498,7 +545,7 @@ onMounted(() => {
               @click="openLocationEditor"
             >
               <i class="fa-solid fa-pen"></i>
-              แก้ไขห้อง
+              {{ hasLocation ? 'แก้ไขห้อง' : 'ระบุห้อง' }}
             </button>
 
             <p class="location-note">
@@ -569,9 +616,9 @@ onMounted(() => {
             <div class="full">
               <span>ตำแหน่ง</span>
               <strong>
-                อาคาร {{ location.building }}
-                · ชั้น {{ location.floor }}
-                · ห้อง {{ location.room }}
+                อาคาร {{ roomLocation.building }}
+                · ชั้น {{ roomLocation.floor }}
+                · ห้อง {{ roomLocation.room }}
               </strong>
             </div>
 
@@ -590,12 +637,13 @@ onMounted(() => {
           </div>
 
           <div class="request-form-actions">
-            <button class="btn-secondary" @click="backToForm">
+            <button class="btn-secondary" type="button" @click="backToForm">
               ย้อนกลับ
             </button>
 
             <button
               class="btn-primary"
+              type="button"
               :disabled="submitting"
               @click="submitRequest"
             >
@@ -603,7 +651,7 @@ onMounted(() => {
             </button>
           </div>
 
-          <p v-if="message" class="form-message">{{ message }}</p>
+          <p v-if="message" class="form-message" role="alert">{{ message }}</p>
         </div>
       </section>
 
@@ -622,7 +670,7 @@ onMounted(() => {
           </p>
 
           <div v-if="successId" class="request-number">
-            REQ-{{ String(successId).padStart(6, '0') }}
+            {{ formatId('REQ', successId) }}
           </div>
 
           <RouterLink class="btn-primary" to="/">
@@ -637,10 +685,16 @@ onMounted(() => {
     <div
       v-if="showLocationEditor"
       class="modal-backdrop"
-      @click.self="showLocationEditor = false"
+      @click.self="closeLocationEditor"
+      @keydown.esc="closeLocationEditor"
     >
-      <div class="modal-card">
-        <h2>แก้ไขตำแหน่งห้อง</h2>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="location-editor-title"
+      >
+        <h2 id="location-editor-title">แก้ไขตำแหน่งห้อง</h2>
 
         <p class="muted">
           ข้อมูลจาก QR เป็นค่าเริ่มต้นเท่านั้น
@@ -649,30 +703,33 @@ onMounted(() => {
 
         <div class="form-grid">
           <div class="field">
-            <label>อาคาร</label>
-            <input v-model="editLocation.building">
+            <label for="edit-building">อาคาร</label>
+            <input id="edit-building" v-model="editLocation.building" autofocus>
           </div>
 
           <div class="field">
-            <label>ชั้น</label>
-            <input v-model="editLocation.floor">
+            <label for="edit-floor">ชั้น</label>
+            <input id="edit-floor" v-model="editLocation.floor">
           </div>
 
           <div class="field full">
-            <label>ห้อง</label>
-            <input v-model="editLocation.room">
+            <label for="edit-room">ห้อง</label>
+            <input id="edit-room" v-model="editLocation.room">
           </div>
         </div>
+
+        <p v-if="editorError" class="form-message" role="alert">{{ editorError }}</p>
 
         <div class="modal-actions">
           <button
             class="btn-secondary"
-            @click="showLocationEditor = false"
+            type="button"
+            @click="closeLocationEditor"
           >
             ยกเลิก
           </button>
 
-          <button class="btn-primary" @click="saveLocation">
+          <button class="btn-primary" type="button" @click="saveLocation">
             บันทึกตำแหน่ง
           </button>
         </div>
@@ -680,3 +737,11 @@ onMounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.lost-found-shortcut {
+  margin-top: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+</style>

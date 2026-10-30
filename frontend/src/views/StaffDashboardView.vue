@@ -2,6 +2,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import StaffLayout from '../components/StaffLayout.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { apiFetch } from '../composables/useAuth'
+import { formatId } from '../utils/format'
 
 const stats = reactive({
   all: 0,
@@ -14,26 +16,29 @@ const latestRequests = ref([])
 const latestLostFound = ref([])
 const requestStatuses = ref({})
 const lostFoundStatuses = ref({})
-
-const getHeaders = () => {
-  const token = localStorage.getItem('token')
-  return {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
-  }
-}
+const loading = ref(true)
+const error = ref('')
 
 async function loadDashboard() {
-  const response = await fetch('/api/staff/dashboard', {
-    headers: getHeaders()
-  })
-  const data = await response.json()
+  loading.value = true
+  error.value = ''
 
-  Object.assign(stats, data.stats || {})
-  latestRequests.value = data.latest_requests || []
-  latestLostFound.value = data.latest_lost_found || []
-  requestStatuses.value = data.request_statuses || {}
-  lostFoundStatuses.value = data.lost_found_statuses || {}
+  try {
+    const response = await apiFetch('/api/staff/dashboard')
+    if (!response.ok) throw new Error('load failed')
+
+    const data = await response.json()
+
+    Object.assign(stats, data.stats || {})
+    latestRequests.value = data.latest_requests || []
+    latestLostFound.value = data.latest_lost_found || []
+    requestStatuses.value = data.request_statuses || {}
+    lostFoundStatuses.value = data.lost_found_statuses || {}
+  } catch {
+    error.value = 'ไม่สามารถโหลดข้อมูลแดชบอร์ดได้'
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(loadDashboard)
@@ -45,6 +50,8 @@ onMounted(loadDashboard)
       <h1>แดชบอร์ด</h1>
       <p>ภาพรวมสถานะงานบริการอาคาร</p>
     </div>
+
+    <p v-if="error" class="flash error" role="alert">{{ error }}</p>
 
     <section class="stats-grid five">
       <article class="stat-card">
@@ -86,7 +93,7 @@ onMounted(loadDashboard)
             </thead>
             <tbody>
               <tr v-for="item in latestRequests" :key="item.id">
-                <td>REQ-{{ String(item.id).padStart(6, '0') }}</td>
+                <td>{{ formatId('REQ', item.id) }}</td>
                 <td>{{ item.service_type }}</td>
                 <td>
                   <StatusBadge
@@ -100,7 +107,7 @@ onMounted(loadDashboard)
                 </td>
               </tr>
               <tr v-if="!latestRequests.length">
-                <td colspan="5">ยังไม่มีข้อมูล</td>
+                <td colspan="5">{{ loading ? 'กำลังโหลด...' : 'ยังไม่มีข้อมูล' }}</td>
               </tr>
             </tbody>
           </table>
@@ -122,7 +129,9 @@ onMounted(loadDashboard)
           </RouterLink>
         </div>
 
-        <p v-if="!latestLostFound.length" class="muted">ยังไม่มีรายการ</p>
+        <p v-if="!latestLostFound.length" class="muted">
+          {{ loading ? 'กำลังโหลด...' : 'ยังไม่มีรายการ' }}
+        </p>
       </section>
     </div>
   </StaffLayout>

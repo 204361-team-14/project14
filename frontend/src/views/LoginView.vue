@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import PublicHeader from '../components/PublicHeader.vue'
 import PublicFooter from '../components/PublicFooter.vue'
+import { getAuth } from '../composables/useAuth'
 
 const router = useRouter()
 const username = ref('')
@@ -11,6 +12,8 @@ const errorMessage = ref('')
 const isLoading = ref(false)
 
 async function handleLogin() {
+  if (isLoading.value) return
+
   errorMessage.value = ''
   isLoading.value = true
 
@@ -26,22 +29,26 @@ async function handleLogin() {
       })
     })
 
-    const data = await response.json()
+    const data = await response.json().catch(() => ({}))
 
-    if (response.ok) {
-      localStorage.setItem('token', data.token)
-      const payload = JSON.parse(atob(data.token.split('.')[1]))
-      const role = payload.role
-      if (role === 'admin') {
-        router.push('/staff/dashboard')
-      } else {
-        router.push('/staff/requests')
-      }
-    } else {
+    if (!response.ok || !data.token) {
       errorMessage.value = data.message || 'ชื่อผู้ใช้งานหรือรหัสผ่านไม่ถูกต้อง'
+      return
     }
 
-  } catch (error) {
+    localStorage.setItem('token', data.token)
+
+    // ใช้ตัวถอดรหัสกลางที่รองรับ base64url
+    const auth = getAuth()
+
+    if (!auth) {
+      localStorage.removeItem('token')
+      errorMessage.value = 'ได้รับข้อมูลเข้าสู่ระบบที่ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง'
+      return
+    }
+
+    router.push(auth.role === 'admin' ? '/staff/dashboard' : '/staff/requests')
+  } catch {
     errorMessage.value = 'ไม่สามารถเชื่อมต่อระบบได้ กรุณาลองใหม่อีกครั้ง'
   } finally {
     isLoading.value = false
@@ -67,12 +74,13 @@ async function handleLogin() {
               <label for="username">ชื่อผู้ใช้งาน</label>
               <div class="input-wrapper">
                 <i class="fa-solid fa-user input-icon"></i>
-                <input 
-                  type="text" 
-                  id="username" 
-                  v-model="username" 
-                  placeholder="กรอกชื่อผู้ใช้งาน" 
-                  required 
+                <input
+                  type="text"
+                  id="username"
+                  v-model="username"
+                  placeholder="กรอกชื่อผู้ใช้งาน"
+                  autocomplete="username"
+                  required
                 />
               </div>
             </div>
@@ -81,17 +89,18 @@ async function handleLogin() {
               <label for="password">รหัสผ่าน</label>
               <div class="input-wrapper">
                 <i class="fa-solid fa-lock input-icon"></i>
-                <input 
-                  type="password" 
-                  id="password" 
-                  v-model="password" 
-                  placeholder="กรอกรหัสผ่าน" 
-                  required 
+                <input
+                  type="password"
+                  id="password"
+                  v-model="password"
+                  placeholder="กรอกรหัสผ่าน"
+                  autocomplete="current-password"
+                  required
                 />
               </div>
             </div>
 
-            <div v-if="errorMessage" class="error-alert">
+            <div v-if="errorMessage" class="error-alert" role="alert">
               <i class="fa-solid fa-circle-exclamation"></i>
               {{ errorMessage }}
             </div>

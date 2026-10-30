@@ -2,7 +2,9 @@ services:
   db:
     image: postgres:17-alpine
     restart: unless-stopped
+    command: ["postgres", "-c", "timezone=Asia/Bangkok"]
     environment:
+      TZ: Asia/Bangkok
       POSTGRES_DB: ${POSTGRES_DB:-cs_building_services}
       POSTGRES_USER: ${POSTGRES_USER:-cs_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cs_password}
@@ -20,6 +22,7 @@ services:
     build: ./backend
     restart: unless-stopped
     environment:
+      TZ: Asia/Bangkok
       DATABASE_URL: postgresql://${POSTGRES_USER:-cs_user}:${POSTGRES_PASSWORD:-cs_password}@db:5432/${POSTGRES_DB:-cs_building_services}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       UPLOAD_FOLDER: /app/uploads

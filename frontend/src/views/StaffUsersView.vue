@@ -1,28 +1,35 @@
 <script setup>
-import { onMounted, reactive, ref, computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import StaffLayout from '../components/StaffLayout.vue'
+import { apiFetch, getAuth } from '../composables/useAuth'
+import { alertDialog, confirmDialog } from '../composables/useDialog'
+
+const MIN_PASSWORD_LENGTH = 8
+
+const auth = getAuth()
+const currentUserId = auth?.userId ?? null
 
 const users = ref([])
 const message = ref('')
 const error = ref('')
 const searchQuery = ref('')
 const filterRole = ref('')
-const currentUsername = ref('') 
+const creating = ref(false)
+const saving = ref(false)
 
 const form = reactive({
   username: '',
-  email: '', 
+  email: '',
   password: '',
-  role: 'technician' 
+  role: 'technician'
 })
-
 
 const editingUser = ref(null)
 const editForm = reactive({
   id: null,
   username: '',
   email: '',
-  password: '' 
+  password: ''
 })
 
 const roleOptions = [
@@ -31,66 +38,61 @@ const roleOptions = [
   { value: 'maid', label: 'แม่บ้าน (Maid)' }
 ]
 
-function loadCurrentUser() {
-  const token = localStorage.getItem('token')
-  if (token) {
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]))
-      currentUsername.value = payload.username
-    } catch (e) {
-      console.error("Token ไม่ถูกต้อง")
-    }
-  }
-}
-
-const getHeaders = () => {
-  const token = localStorage.getItem('token')
-  return {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
-  }
+function isSelf(user) {
+  return currentUserId !== null && Number(user.id) === Number(currentUserId)
 }
 
 async function loadUsers() {
   try {
-    const response = await fetch('/api/staff/users', { headers: getHeaders() })
+    const response = await apiFetch('/api/staff/users')
+    if (!response.ok) throw new Error('load failed')
+
     const data = await response.json()
-    if (response.ok) {
-      users.value = data.users || []
-    }
-  } catch (err) {
+    users.value = data.users || []
+  } catch {
     error.value = 'ไม่สามารถโหลดข้อมูลพนักงานได้'
   }
 }
 
 const filteredUsers = computed(() => {
-  const filtered = users.value.filter(user => {
-    const matchSearch = user.username.toLowerCase().includes(searchQuery.value.toLowerCase()) || 
-                        (user.email && user.email.toLowerCase().includes(searchQuery.value.toLowerCase()))
-    
-    const matchRole = filterRole.value === '' || user.role === filterRole.value
+  const keyword = searchQuery.value.trim().toLowerCase()
 
-    return matchSearch && matchRole
-  })
-  
-  return filtered.sort((a, b) => {
-    if (a.username === currentUsername.value) return -1 
-    if (b.username === currentUsername.value) return 1  
-    return a.id - b.id 
-  })
+  return users.value
+    .filter((user) => {
+      const matchSearch = !keyword ||
+        user.username.toLowerCase().includes(keyword) ||
+        (user.email && user.email.toLowerCase().includes(keyword))
+
+      const matchRole = filterRole.value === '' || user.role === filterRole.value
+
+      return matchSearch && matchRole
+    })
+    .sort((a, b) => {
+      if (isSelf(a)) return -1
+      if (isSelf(b)) return 1
+      return a.id - b.id
+    })
 })
 
 async function createUser() {
+  if (creating.value) return
+
   message.value = ''
   error.value = ''
 
+  if (form.password.length < MIN_PASSWORD_LENGTH) {
+    error.value = `รหัสผ่านต้องมีอย่างน้อย ${MIN_PASSWORD_LENGTH} ตัวอักษร`
+    return
+  }
+
+  creating.value = true
+
   try {
-    const response = await fetch('/api/staff/users', {
+    const response = await apiFetch('/api/staff/users', {
       method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify(form)
+      body: JSON.stringify({ ...form, username: form.username.trim() })
     })
-    const data = await response.json()
+    const data = await response.json().catch(() => ({}))
 
     if (!response.ok) {
       error.value = data.message || 'ไม่สามารถเพิ่มพนักงานได้'
@@ -103,8 +105,10 @@ async function createUser() {
     form.password = ''
     form.role = 'technician'
     await loadUsers()
-  } catch (err) {
+  } catch {
     error.value = 'เกิดข้อผิดพลาดในการเชื่อมต่อ'
+  } finally {
+    creating.value = false
   }
 }
 
@@ -112,96 +116,118 @@ async function handleRoleChange(user, event) {
   const newRole = event.target.value
   const oldRole = user.role
 
-  if (user.username === currentUsername.value && newRole !== 'admin') {
-    alert('คุณไม่สามารถลดสิทธิ์ตัวเองในขณะที่ใช้งานอยู่ได้')
+  if (isSelf(user) && newRole !== 'admin') {
     event.target.value = oldRole
+    await alertDialog('คุณไม่สามารถลดสิทธิ์ตัวเองในขณะที่ใช้งานอยู่ได้', { title: 'ไม่สามารถเปลี่ยนตำแหน่งได้' })
     return
   }
 
   user.role = newRole
-  await updateRole(user, oldRole)
+  await updateRole(user, oldRole, event)
 }
 
-async function updateRole(user, oldRole) {
+async function updateRole(user, oldRole, event) {
   message.value = ''
   error.value = ''
+
   try {
-    const response = await fetch(`/api/staff/users/${user.id}/role`, {
+    const response = await apiFetch(`/api/staff/users/${user.id}/role`, {
       method: 'PATCH',
-      headers: getHeaders(),
       body: JSON.stringify({ role: user.role })
     })
 
     if (response.ok) {
       message.value = `เปลี่ยนตำแหน่งของ ${user.username} เรียบร้อยแล้ว`
     } else {
-      const data = await response.json()
+      const data = await response.json().catch(() => ({}))
       error.value = data.message || 'ไม่สามารถอัปเดตตำแหน่งได้'
-      user.role = oldRole 
+      user.role = oldRole
+      event.target.value = oldRole
     }
-  } catch (err) {
+  } catch {
     error.value = 'เกิดข้อผิดพลาดในการเชื่อมต่อ'
     user.role = oldRole
+    event.target.value = oldRole
   }
 }
 
 async function deleteUser(user) {
-  if (user.username === currentUsername.value) {
-    alert('ไม่สามารถลบบัญชีที่กำลังล็อกอินอยู่ได้')
+  if (isSelf(user)) {
+    await alertDialog('ไม่สามารถลบบัญชีที่กำลังล็อกอินอยู่ได้', { title: 'ไม่สามารถลบบัญชีได้' })
     return
   }
 
-  if (!confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบบัญชี ${user.username}?`)) return
+  const ok = await confirmDialog(`ต้องการลบบัญชี "${user.username}" ใช่หรือไม่?\nการลบไม่สามารถย้อนกลับได้`, {
+    title: 'ลบบัญชีผู้ใช้งาน',
+    confirmText: 'ลบบัญชี',
+    variant: 'danger'
+  })
+  if (!ok) return
+
+  message.value = ''
+  error.value = ''
 
   try {
-    const response = await fetch(`/api/staff/users/${user.id}`, {
-      method: 'DELETE',
-      headers: getHeaders()
+    const response = await apiFetch(`/api/staff/users/${user.id}`, {
+      method: 'DELETE'
     })
 
     if (response.ok) {
       message.value = 'ลบบัญชีเรียบร้อยแล้ว'
       await loadUsers()
     } else {
-      const data = await response.json()
+      const data = await response.json().catch(() => ({}))
       error.value = data.message || 'ไม่สามารถลบผู้ใช้งานได้'
     }
-  } catch (err) {
+  } catch {
     error.value = 'เกิดข้อผิดพลาดในการเชื่อมต่อ'
   }
 }
-
 
 function openEditUser(user) {
   editingUser.value = user
   editForm.id = user.id
   editForm.username = user.username
   editForm.email = user.email || ''
-  editForm.password = '' 
+  editForm.password = ''
 }
 
 function closeEditUser() {
   editingUser.value = null
 }
 
+function onKeydown(event) {
+  if (event.key === 'Escape' && editingUser.value) closeEditUser()
+}
+
 async function saveEditUser() {
+  if (saving.value) return
+
   message.value = ''
   error.value = ''
-  
-  try {
 
+  const newPassword = editForm.password.trim()
+
+  if (newPassword !== '' && newPassword.length < MIN_PASSWORD_LENGTH) {
+    error.value = `รหัสผ่านใหม่ต้องมีอย่างน้อย ${MIN_PASSWORD_LENGTH} ตัวอักษร`
+    return
+  }
+
+  saving.value = true
+
+  try {
     const updateData = {
-      username: editForm.username,
-      email: editForm.email
+      username: editForm.username.trim(),
+      email: editForm.email.trim()
     }
-    // ถ้ามีการกรอกรหัสผ่านใหม่ ค่อยแนบไป
-    if (editForm.password.trim() !== '') {
+
+    // แนบรหัสผ่านเฉพาะเมื่อกรอกใหม่
+    if (newPassword !== '') {
       updateData.password = editForm.password
     }
 
-    const response = await fetch(`/api/staff/users/${editForm.id}`, {
-      method: 'PUT', // หรือ PATCH ขึ้นอยู่กับ API ของคุณ
-      headers: getHeaders(),
+    const response = await apiFetch(`/api/staff/users/${editForm.id}`, {
+      method: 'PUT', 
       body: JSON.stringify(updateData)
     })
 
@@ -210,25 +236,34 @@ async function saveEditUser() {
       closeEditUser()
       await loadUsers()
     } else {
-      const data = await response.json()
+      const data = await response.json().catch(() => ({}))
       error.value = data.message || 'ไม่สามารถอัปเดตข้อมูลได้'
     }
-  } catch (err) {
+  } catch {
     error.value = 'เกิดข้อผิดพลาดในการเชื่อมต่อ'
+  } finally {
+    saving.value = false
   }
 }
 
+function onSearchSubmit() {
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+}
 
-function getRoleBadgeClass(role) {
-  if (role === 'admin') return 'on' 
-  if (role === 'technician') return 'off' 
-  if (role === 'maid') return 'warning' 
+function getRoleClass(role) {
+  if (role === 'admin') return 'role-admin'
+  if (role === 'technician') return 'role-technician'
+  if (role === 'maid') return 'role-maid'
   return ''
 }
 
 onMounted(() => {
-  loadCurrentUser()
   loadUsers()
+  window.addEventListener('keydown', onKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
 })
 </script>
 
@@ -239,59 +274,68 @@ onMounted(() => {
       <p>เพิ่ม ลบ หรือแก้ไขตำแหน่ง (ช่าง, แม่บ้าน, ผู้ดูแลระบบ) เพื่อจำกัดสิทธิ์การเข้าถึงข้อมูล</p>
     </div>
 
-    <p v-if="message" class="flash success">{{ message }}</p>
-    <p v-if="error" class="flash error">{{ error }}</p>
+    <p v-if="message" class="flash success" role="status">{{ message }}</p>
+    <p v-if="error" class="flash error" role="alert">{{ error }}</p>
 
     <div class="rooms-grid">
-      <!-- ... ส่วนเพิ่มพนักงานใหม่ เหมือนเดิม ... -->
       <section class="card">
         <h2>เพิ่มพนักงานใหม่</h2>
         <form @submit.prevent="createUser">
           <div class="field">
-            <label>ชื่อผู้ใช้งาน (Username) *</label>
-            <input v-model="form.username" required placeholder="เช่น tech_01">
+            <label for="new-username">ชื่อผู้ใช้งาน (Username) *</label>
+            <input id="new-username" v-model="form.username" required placeholder="เช่น tech_01" autocomplete="off">
           </div>
           <div class="field">
-            <label>อีเมล (Email)</label>
-            <input type="email" v-model="form.email" placeholder="เช่น user@example.com">
+            <label for="new-email">อีเมล (Email)</label>
+            <input id="new-email" type="email" v-model="form.email" placeholder="เช่น user@example.com" autocomplete="off">
           </div>
           <div class="field">
-            <label>รหัสผ่าน *</label>
-            <input type="password" v-model="form.password" required placeholder="กำหนดรหัสผ่าน">
+            <label for="new-password">รหัสผ่าน * (อย่างน้อย {{ MIN_PASSWORD_LENGTH }} ตัวอักษร)</label>
+            <input
+              id="new-password"
+              type="password"
+              v-model="form.password"
+              required
+              :minlength="MIN_PASSWORD_LENGTH"
+              placeholder="กำหนดรหัสผ่าน"
+              autocomplete="new-password"
+            >
           </div>
           <div class="field">
-            <label>ตำแหน่ง *</label>
-            <select v-model="form.role" required>
+            <label for="new-role">ตำแหน่ง *</label>
+            <select id="new-role" v-model="form.role" required>
               <option v-for="opt in roleOptions" :key="opt.value" :value="opt.value">
                 {{ opt.label }}
               </option>
             </select>
           </div>
-          <button type="submit" class="btn-primary">
-            <i class="fa-solid fa-user-plus"></i> เพิ่มพนักงาน
+          <button type="submit" class="btn-primary" :disabled="creating">
+            <i class="fa-solid fa-user-plus"></i>
+            {{ creating ? 'กำลังเพิ่ม...' : 'เพิ่มพนักงาน' }}
           </button>
         </form>
       </section>
 
       <section class="card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-          <h2 style="margin: 0;">บัญชีผู้ใช้งานทั้งหมด</h2>
-          
-          <div style="display: flex; gap: 0.5rem;">
-            <input 
-              v-model="searchQuery" 
-              type="text" 
-              placeholder="ค้นหาชื่อ หรือ อีเมล..." 
-              style="padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px;"
-            >
-            <select v-model="filterRole" style="padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px;">
-              <option value="">ทุกตำแหน่ง</option>
-              <option value="admin">ผู้ดูแลระบบ</option>
-              <option value="technician">ช่าง</option>
-              <option value="maid">แม่บ้าน</option>
-            </select>
-          </div>
-        </div>
+        <h2>บัญชีผู้ใช้งานทั้งหมด</h2>
+
+        <form class="filter-grid users" @submit.prevent="onSearchSubmit">
+          <input
+            v-model="searchQuery"
+            type="search"
+            placeholder="ค้นหาชื่อ หรือ อีเมล..."
+            aria-label="ค้นหา"
+          >
+
+          <select v-model="filterRole" aria-label="กรองตามตำแหน่ง">
+            <option value="">ทุกตำแหน่ง</option>
+            <option value="admin">ผู้ดูแลระบบ</option>
+            <option value="technician">ช่าง</option>
+            <option value="maid">แม่บ้าน</option>
+          </select>
+
+          <button class="btn-primary">ค้นหา</button>
+        </form>
 
         <div class="table-wrap">
           <table>
@@ -305,15 +349,19 @@ onMounted(() => {
             </thead>
             <tbody>
               <tr v-for="user in filteredUsers" :key="user.id">
-                <td><strong>{{ user.username }}</strong></td>
+                <td>
+                  <strong>{{ user.username }}</strong>
+                  <small v-if="isSelf(user)" class="muted"> (คุณ)</small>
+                </td>
                 <td>{{ user.email || '-' }}</td>
                 <td>
-                  <select 
-                    :value="user.role" 
-                    @change="handleRoleChange(user, $event)" 
+                  <select
+                    :value="user.role"
                     class="role-inline-select"
-                    :class="getRoleBadgeClass(user.role)"
-                    :disabled="user.username === currentUsername"
+                    :class="getRoleClass(user.role)"
+                    :disabled="isSelf(user)"
+                    :aria-label="`ตำแหน่งของ ${user.username}`"
+                    @change="handleRoleChange(user, $event)"
                   >
                     <option v-for="opt in roleOptions" :key="opt.value" :value="opt.value">
                       {{ opt.label }}
@@ -322,18 +370,18 @@ onMounted(() => {
                 </td>
                 <td>
                   <div class="row-actions wrap">
-                    <!-- ปุ่มแก้ไข (เพิ่มเข้ามาใหม่) -->
                     <button
+                      type="button"
                       class="btn-soft"
                       @click="openEditUser(user)"
                     >
                       <i class="fa-solid fa-pen-to-square"></i> แก้ไข
                     </button>
-                    <!-- ปุ่มลบ (ของเดิม) -->
                     <button
+                      type="button"
                       class="btn-soft danger"
+                      :disabled="isSelf(user)"
                       @click="deleteUser(user)"
-                      :disabled="user.username === currentUsername"
                     >
                       <i class="fa-solid fa-trash"></i>
                       ลบ
@@ -350,32 +398,78 @@ onMounted(() => {
       </section>
     </div>
 
-    <div 
-      v-if="editingUser" 
-      style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;"
+    <div
+      v-if="editingUser"
+      class="modal-backdrop"
+      @click.self="closeEditUser"
     >
-      <div class="card" style="width: 100%; max-width: 400px; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-        <h2 style="margin-top: 0;">แก้ไขข้อมูลบัญชี</h2>
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-user-title"
+      >
+        <h2 id="edit-user-title">แก้ไขข้อมูลบัญชี</h2>
         <form @submit.prevent="saveEditUser">
           <div class="field">
-            <label>ชื่อผู้ใช้งาน (Username) *</label>
-            <input v-model="editForm.username" required>
+            <label for="edit-username">ชื่อผู้ใช้งาน (Username) *</label>
+            <input id="edit-username" v-model="editForm.username" required autofocus>
           </div>
           <div class="field">
-            <label>อีเมล (Email)</label>
-            <input type="email" v-model="editForm.email">
+            <label for="edit-email">อีเมล (Email)</label>
+            <input id="edit-email" type="email" v-model="editForm.email">
           </div>
           <div class="field">
-            <label>รหัสผ่านใหม่ (ไม่บังคับ)</label>
-            <input type="password" v-model="editForm.password" placeholder="ปล่อยว่างไว้หากไม่ต้องการเปลี่ยน">
+            <label for="edit-password">รหัสผ่านใหม่ (ไม่บังคับ)</label>
+            <input
+              id="edit-password"
+              type="password"
+              v-model="editForm.password"
+              placeholder="ปล่อยว่างไว้หากไม่ต้องการเปลี่ยน"
+              autocomplete="new-password"
+            >
           </div>
-          <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem;">
-            <button type="submit" class="btn-primary" style="flex: 1;">บันทึก</button>
-            <button type="button" class="btn-soft" @click="closeEditUser" style="flex: 1;">ยกเลิก</button>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" @click="closeEditUser">ยกเลิก</button>
+            <button type="submit" class="btn-primary" :disabled="saving">
+              {{ saving ? 'กำลังบันทึก...' : 'บันทึก' }}
+            </button>
           </div>
         </form>
       </div>
     </div>
-
   </StaffLayout>
 </template>
+
+<style scoped>
+.filter-grid.users {
+  grid-template-columns: 2fr 1fr auto;
+}
+
+@media (max-width: 960px) {
+  .filter-grid.users {
+    grid-template-columns: 1fr 1fr auto;
+  }
+}
+
+@media (max-width: 700px) {
+  .filter-grid.users {
+    grid-template-columns: 1fr;
+  }
+}
+
+.role-admin {
+  border-color: #2563eb;
+  color: #1d4ed8;
+}
+
+.role-technician {
+  border-color: #0d9488;
+  color: #0f766e;
+}
+
+.role-maid {
+  border-color: #d97706;
+  color: #b45309;
+}
+</style>

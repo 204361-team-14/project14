@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { getAuth } from './composables/useAuth'
 import HomeView from './views/HomeView.vue'
 import Login from './views/LoginView.vue'
 import LostFoundView from './views/LostFoundView.vue'
@@ -12,6 +13,7 @@ import StaffLostFoundView from './views/StaffLostFoundView.vue'
 import StaffLostFoundDetailView from './views/StaffLostFoundDetailView.vue'
 import StaffRoomsView from './views/StaffRoomsView.vue'
 import StaffUsersView from './views/StaffUsersView.vue'
+
 
 const router = createRouter({
   history: createWebHistory(),

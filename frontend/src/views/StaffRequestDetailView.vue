@@ -1,130 +1,171 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StaffLayout from '../components/StaffLayout.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import ImageLightbox from '../components/ImageLightbox.vue'
+import { apiFetch, getAuth } from '../composables/useAuth'
+import { alertDialog, confirmDialog } from '../composables/useDialog'
+import { useImageUploader } from '../composables/useImageUploader'
+import { formatId, sameId } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
+
+const auth = getAuth()
+const userRole = auth?.role ?? ''
+const currentUserId = auth?.userId ?? null
+
 const item = ref(null)
 const history = ref([])
 const statuses = ref({})
 const note = ref('')
 const imageViewerIndex = ref(-1)
 
-const userRole = ref('')
-const currentUserId = ref(null)
 const message = ref('')
 const error = ref('')
 
 const staffList = ref([])
 const selectedStaffId = ref('')
-const completionFile = ref(null)
+const {
+  previews: completionPreviews,
+  files: completionFiles,
+  notice: completionNotice,
+  onChange: onCompletionImageChange,
+  remove: removeCompletionImage,
+  clear: clearCompletionImages
+} = useImageUploader(1)
+
+const completing = ref(false)
+const savingNote = ref(false)
+const assigning = ref(false)
 
 const requestId = computed(() => route.params.id)
 
-const getHeaders = () => {
-  const token = localStorage.getItem('token')
-  return {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
-  }
+function showMessage(text) {
+  error.value = ''
+  message.value = text
+  setTimeout(() => {
+    if (message.value === text) message.value = ''
+  }, 3000)
 }
 
 async function loadDetail() {
-  const response = await fetch(`/api/staff/requests/${requestId.value}`, {
-    headers: getHeaders()
-  })
-  if (!response.ok) {
-    router.replace('/staff/requests')
-    return
-  }
+  try {
+    const response = await apiFetch(`/api/staff/requests/${requestId.value}`)
+    if (!response.ok) {
+      router.replace('/staff/requests')
+      return
+    }
 
-  const data = await response.json()
-  item.value = data.request
-  history.value = data.history || []
-  statuses.value = data.statuses || {}
-  note.value = item.value.staff_note || ''
-  selectedStaffId.value = item.value.assigned_to || ''
+    const data = await response.json()
+    item.value = data.request
+    history.value = data.history || []
+    statuses.value = data.statuses || {}
+    note.value = item.value.staff_note || ''
+    selectedStaffId.value = item.value.assigned_to || ''
+  } catch {
+    error.value = 'ไม่สามารถโหลดรายละเอียดคำขอได้'
+  }
 }
 
 async function loadStaffList() {
-  const response = await fetch('/api/staff/list', { headers: getHeaders() })
-  if (response.ok) {
-    const data = await response.json()
-    staffList.value = data.staff || []
+  try {
+    const response = await apiFetch('/api/staff/list')
+    if (response.ok) {
+      const data = await response.json()
+      staffList.value = data.staff || []
+    }
+  } catch {
   }
 }
 
 const availableStaff = computed(() => {
   if (!item.value) return []
-  if (item.value.service_type === 'แจ้งทำความสะอาด') {
-    return staffList.value.filter(s => s.role === 'maid')
-  } else {
-    return staffList.value.filter(s => s.role === 'technician')
-  }
+  const role = item.value.service_type === 'แจ้งทำความสะอาด' ? 'maid' : 'technician'
+  return staffList.value.filter((s) => s.role === role)
 })
 
 const allImages = computed(() => {
   if (!item.value) return []
-  const imgs = item.value.images?.length ? [...item.value.images] : (item.value.image_path ? [item.value.image_path] : [])
+
+  const imgs = item.value.images?.length
+    ? [...item.value.images]
+    : (item.value.image_path ? [item.value.image_path] : [])
+
   if (item.value.completion_image_path) {
     imgs.push(item.value.completion_image_path)
   }
+
   return imgs
 })
 
-const isAssignedToMe = computed(() => item.value && item.value.assigned_to == currentUserId.value)
-const canManageTask = computed(() => userRole.value === 'admin' || isAssignedToMe.value)
+const isOpen = computed(() => (
+  item.value && item.value.status !== 'completed' && item.value.status !== 'cancelled'
+))
+const isAssignedToMe = computed(() => (
+  Boolean(item.value) && sameId(item.value.assigned_to, currentUserId)
+))
+const canManageTask = computed(() => userRole === 'admin' || isAssignedToMe.value)
 
 async function assignStaff() {
+  if (assigning.value) return
+
+  assigning.value = true
   message.value = ''
   error.value = ''
 
-  const response = await fetch(`/api/staff/requests/${requestId.value}/assign`, {
-    method: 'PATCH',
-    headers: getHeaders(),
-    body: JSON.stringify({ staff_id: selectedStaffId.value || null })
-  })
-  
-  if (response.ok) {
-    message.value = 'อัปเดตผู้รับผิดชอบเรียบร้อยแล้ว'
-    await loadDetail()
-    setTimeout(() => { message.value = '' }, 3000)
-  } else {
-    const data = await response.json().catch(() => ({}))
-    error.value = data.message || 'เกิดข้อผิดพลาดในการจ่ายงาน'
-  }
-}
+  try {
+    const response = await apiFetch(`/api/staff/requests/${requestId.value}/assign`, {
+      method: 'PATCH',
+      body: JSON.stringify({ staff_id: selectedStaffId.value || null })
+    })
 
-function onFileChange(event) {
-  completionFile.value = event.target.files[0]
+    if (response.ok) {
+      await loadDetail()
+      showMessage('อัปเดตผู้รับผิดชอบเรียบร้อยแล้ว')
+    } else {
+      const data = await response.json().catch(() => ({}))
+      error.value = data.message || 'เกิดข้อผิดพลาดในการจ่ายงาน'
+    }
+  } catch {
+    error.value = 'ไม่สามารถเชื่อมต่อกับระบบได้'
+  } finally {
+    assigning.value = false
+  }
 }
 
 async function completeWithImage() {
-  if (!completionFile.value) {
-    alert('กรุณาแนบรูปภาพหลักฐานการทำงานเสร็จสิ้น')
+  if (completing.value) return
+
+  if (!completionFiles.value.length) {
+    await alertDialog('กรุณาแนบรูปภาพหลักฐานการทำงานเสร็จสิ้น', { title: 'ยังไม่ได้แนบรูปภาพ' })
     return
   }
 
-  const formData = new FormData()
-  formData.append('images', completionFile.value)
+  completing.value = true
 
-  const token = localStorage.getItem('token')
-  const response = await fetch(`/api/staff/requests/${requestId.value}/complete`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}` },
-    body: formData
-  })
+  try {
+    const formData = new FormData()
+    formData.append('images', completionFiles.value[0])
 
-  if (response.ok) {
-    alert('บันทึกงานเสร็จสิ้นและส่งรูปหลักฐานเรียบร้อยแล้ว')
-    completionFile.value = null
-    await loadDetail()
-  } else {
-    const data = await response.json()
-    alert(data.message || 'เกิดข้อผิดพลาดในการอัปโหลด')
+    const response = await apiFetch(`/api/staff/requests/${requestId.value}/complete`, {
+      method: 'POST',
+      body: formData
+    })
+
+    if (response.ok) {
+      clearCompletionImages()
+      await loadDetail()
+      showMessage('บันทึกงานเสร็จสิ้นและส่งรูปหลักฐานเรียบร้อยแล้ว')
+    } else {
+      const data = await response.json().catch(() => ({}))
+      await alertDialog(data.message || 'เกิดข้อผิดพลาดในการอัปโหลด', { title: 'อัปโหลดไม่สำเร็จ', variant: 'error' })
+    }
+  } catch {
+    await alertDialog('ไม่สามารถเชื่อมต่อกับระบบได้', { title: 'เกิดข้อผิดพลาด', variant: 'error' })
+  } finally {
+    completing.value = false
   }
 }
 
@@ -137,70 +178,101 @@ function closeImageViewer() {
 }
 
 async function updateStatus(status) {
-  const statusLabel = statuses.value[status] || status;
+  const statusLabel = statuses.value[status] || status
 
-  if (status === 'completed') {
-    if (!confirm(`ยืนยันเปลี่ยนสถานะเป็น "${statusLabel}" ใช่หรือไม่?\n(เมื่อเสร็จสิ้นแล้วจะไม่สามารถเปลี่ยนสถานะกลับมาได้อีก)`)) {
-      return; 
-    }
-  } else {
-    if (!confirm(`ยืนยันการเปลี่ยนสถานะเป็น "${statusLabel}" ใช่หรือไม่?`)) {
-      return;
-    }
-  }
+  const confirmText = status === 'completed'
+    ? `ยืนยันเปลี่ยนสถานะเป็น "${statusLabel}" ใช่หรือไม่?\n(เมื่อเสร็จสิ้นแล้วจะไม่สามารถเปลี่ยนสถานะกลับมาได้อีก)`
+    : `ยืนยันการเปลี่ยนสถานะเป็น "${statusLabel}" ใช่หรือไม่?`
 
-  const response = await fetch(`/api/staff/requests/${requestId.value}/status`, {
-    method: 'PATCH',
-    headers: getHeaders(),
-    body: JSON.stringify({ status })
+  const ok = await confirmDialog(confirmText, {
+    title: 'เปลี่ยนสถานะคำขอ',
+    confirmText: 'ยืนยัน',
+    variant: status === 'completed' ? 'warning' : 'default'
   })
-  
-  if (response.ok) await loadDetail()
+  if (!ok) return
+
+  try {
+    const response = await apiFetch(`/api/staff/requests/${requestId.value}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status })
+    })
+
+    if (response.ok) {
+      await loadDetail()
+      showMessage('เปลี่ยนสถานะเรียบร้อยแล้ว')
+    } else {
+      const data = await response.json().catch(() => ({}))
+      error.value = data.message || 'ไม่สามารถเปลี่ยนสถานะได้'
+    }
+  } catch {
+    error.value = 'ไม่สามารถเชื่อมต่อกับระบบได้'
+  }
 }
 
 async function saveNote() {
-  const response = await fetch(`/api/staff/requests/${requestId.value}/note`, {
-    method: 'PATCH',
-    headers: getHeaders(),
-    body: JSON.stringify({ staff_note: note.value })
-  })
-  if (response.ok) await loadDetail()
+  if (savingNote.value) return
+
+  savingNote.value = true
+
+  try {
+    const response = await apiFetch(`/api/staff/requests/${requestId.value}/note`, {
+      method: 'PATCH',
+      body: JSON.stringify({ staff_note: note.value })
+    })
+
+    if (response.ok) {
+      await loadDetail()
+      showMessage('บันทึกหมายเหตุเรียบร้อยแล้ว')
+    } else {
+      const data = await response.json().catch(() => ({}))
+      error.value = data.message || 'ไม่สามารถบันทึกหมายเหตุได้'
+    }
+  } catch {
+    error.value = 'ไม่สามารถเชื่อมต่อกับระบบได้'
+  } finally {
+    savingNote.value = false
+  }
 }
 
 async function deleteRequest() {
   if (item.value?.status !== 'completed') return
-  if (!confirm(`ยืนยันลบคำขอ REQ-${String(item.value.id).padStart(6, '0')} ? การลบไม่สามารถย้อนกลับได้`)) return
+  const ok = await confirmDialog(
+    `ต้องการลบคำขอ ${formatId('REQ', item.value.id)} ใช่หรือไม่?\nการลบไม่สามารถย้อนกลับได้`,
+    { title: 'ลบคำขอ', confirmText: 'ลบ', variant: 'danger' }
+  )
+  if (!ok) return
 
-  const response = await fetch(`/api/staff/requests/${requestId.value}`, {
-    method: 'DELETE',
-    headers: getHeaders()
-  })
+  try {
+    const response = await apiFetch(`/api/staff/requests/${requestId.value}`, {
+      method: 'DELETE'
+    })
 
-  const data = await response.json()
-  if (!response.ok) {
-    alert(data.message || 'ไม่สามารถลบรายการได้')
-    return
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      await alertDialog(data.message || 'ไม่สามารถลบรายการได้', { title: 'ลบไม่สำเร็จ', variant: 'error' })
+      return
+    }
+
+    router.push('/staff/requests')
+  } catch {
+    await alertDialog('ไม่สามารถเชื่อมต่อกับระบบได้', { title: 'เกิดข้อผิดพลาด', variant: 'error' })
   }
-  router.push('/staff/requests')
 }
 
+// เปลี่ยนคำขอ (เช่นกดลิงก์ไปคำขออื่น) ให้โหลดใหม่
+watch(requestId, loadDetail)
+
 onMounted(() => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    const payload = JSON.parse(atob(token.split('.')[1]))
-    userRole.value = payload.role
-    currentUserId.value = payload.user_id 
-  }
-  
   loadDetail()
-  if (userRole.value === 'admin') {
-    loadStaffList()
-  }
+  if (userRole === 'admin') loadStaffList()
 })
 </script>
 
 <template>
   <StaffLayout>
+    <p v-if="message" class="flash success" role="status">{{ message }}</p>
+    <p v-if="error" class="flash error" role="alert">{{ error }}</p>
+
     <template v-if="item">
       <RouterLink class="back-link" to="/staff/requests">
         <i class="fa-solid fa-chevron-left"></i>
@@ -208,11 +280,8 @@ onMounted(() => {
       </RouterLink>
 
       <div class="staff-page-title">
-        <h1>รายละเอียดคำขอ REQ-{{ String(item.id).padStart(6, '0') }}</h1>
+        <h1>รายละเอียดคำขอ {{ formatId('REQ', item.id) }}</h1>
       </div>
-
-      <p v-if="message" class="flash success">{{ message }}</p>
-      <p v-if="error" class="flash error">{{ error }}</p>
 
       <section class="card detail-card">
         <div class="detail-grid detail-grid-auto">
@@ -244,11 +313,22 @@ onMounted(() => {
         <div class="detail-section">
           <h3>รูปภาพประกอบ (ผู้แจ้ง)</h3>
           <div v-if="item.images?.length" class="staff-image-grid">
-            <button v-for="(image, index) in item.images" :key="image" class="staff-image-button" type="button" @click="openImageViewer(index)">
+            <button
+              v-for="(image, index) in item.images"
+              :key="image"
+              class="staff-image-button"
+              type="button"
+              @click="openImageViewer(index)"
+            >
               <img class="detail-image" :src="`/uploads/${image}`" alt="รูปประกอบ">
             </button>
           </div>
-          <button v-else-if="item.image_path" class="staff-image-button single" type="button" @click="openImageViewer(0)">
+          <button
+            v-else-if="item.image_path"
+            class="staff-image-button single"
+            type="button"
+            @click="openImageViewer(0)"
+          >
             <img class="detail-image" :src="`/uploads/${item.image_path}`" alt="รูปประกอบ">
           </button>
           <p v-else class="muted">ไม่มีรูปภาพ</p>
@@ -256,32 +336,82 @@ onMounted(() => {
 
         <div class="detail-section" v-if="item.completion_image_path">
           <h3 class="completion-title">รูปภาพหลักฐาน (ตอนเสร็จงาน)</h3>
-          <button class="staff-image-button single completion-image-button" type="button" @click="openImageViewer(allImages.length - 1)">
+          <button
+            class="staff-image-button single completion-image-button"
+            type="button"
+            @click="openImageViewer(allImages.length - 1)"
+          >
             <img class="detail-image" :src="`/uploads/${item.completion_image_path}`" alt="รูปหลักฐานเสร็จงาน">
           </button>
         </div>
       </section>
 
-      <section class="card" v-if="userRole === 'admin' && item.status !== 'completed' && item.status !== 'cancelled'">
+      <section class="card" v-if="userRole === 'admin' && isOpen">
         <h2>จ่ายงาน (มอบหมายผู้รับผิดชอบ)</h2>
         <div class="assign-staff-row">
-          <select v-model="selectedStaffId" class="assign-staff-select">
+          <select v-model="selectedStaffId" class="assign-staff-select" aria-label="เลือกผู้รับผิดชอบ">
             <option value="">-- ยังไม่ระบุ / ยกเลิกการมอบหมาย --</option>
             <option v-for="staff in availableStaff" :key="staff.id" :value="staff.id">
               {{ staff.username }} ({{ staff.role === 'maid' ? 'แม่บ้าน' : 'ช่าง' }})
             </option>
           </select>
-          <button class="btn-primary" @click="assignStaff">บันทึกการจ่ายงาน</button>
+          <button class="btn-primary" :disabled="assigning" @click="assignStaff">
+            {{ assigning ? 'กำลังบันทึก...' : 'บันทึกการจ่ายงาน' }}
+          </button>
         </div>
       </section>
 
-      <section class="card" v-if="userRole !== 'admin' && isAssignedToMe && item.status !== 'completed' && item.status !== 'cancelled'">
+      <section class="card" v-if="userRole !== 'admin' && isAssignedToMe && isOpen">
         <h2>ส่งงาน (เสร็จสิ้นภารกิจ)</h2>
         <p class="muted">กรุณาแนบรูปภาพหลักฐานการทำงาน เพื่อเปลี่ยนสถานะเป็นเสร็จสิ้น</p>
+
+        <label class="multi-upload-box">
+          <input
+            class="upload-input"
+            name="images"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            @change="onCompletionImageChange"
+          >
+
+          <i class="fa-solid fa-cloud-arrow-up"></i>
+          <span>เพิ่มรูปภาพ</span>
+          <small>แนบรูปหลักฐาน 1 รูป</small>
+        </label>
+
+        <div v-if="completionPreviews.length" class="image-preview-grid">
+          <article
+            v-for="(preview, index) in completionPreviews"
+            :key="preview.url"
+            class="image-preview-card"
+          >
+            <img :src="preview.url" :alt="preview.name">
+
+            <button
+              class="image-remove-btn"
+              type="button"
+              aria-label="ลบรูป"
+              @click="removeCompletionImage(index)"
+            >
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+
+            <span>{{ preview.name }}</span>
+          </article>
+        </div>
+
+        <small v-if="completionNotice" class="multi-image-count" role="alert">
+          {{ completionNotice }}
+        </small>
+
         <div class="complete-task-row">
-          <input type="file" accept="image/*" @change="onFileChange" class="completion-file-input">
-          <button class="btn-primary complete-task-button" @click="completeWithImage">
-            <i class="fa-solid fa-check"></i> ส่งรูปและเสร็จสิ้นงาน
+          <button
+            class="btn-primary complete-task-button"
+            :disabled="completing"
+            @click="completeWithImage"
+          >
+            <i class="fa-solid fa-check"></i>
+            {{ completing ? 'กำลังอัปโหลด...' : 'ส่งรูปและเสร็จสิ้นงาน' }}
           </button>
         </div>
       </section>
@@ -318,8 +448,21 @@ onMounted(() => {
 
         <section class="card">
           <h2>หมายเหตุเจ้าหน้าที่</h2>
-          <textarea v-model="note" class="note-box" placeholder="เช่น รออะไหล่ / นัดช่างแล้ว" :disabled="item.status === 'completed'"></textarea>
-          <button class="btn-primary" @click="saveNote" v-if="item.status !== 'completed'">บันทึกหมายเหตุ</button>
+          <textarea
+            v-model="note"
+            class="note-box"
+            placeholder="เช่น รออะไหล่ / นัดช่างแล้ว"
+            aria-label="หมายเหตุเจ้าหน้าที่"
+            :disabled="item.status === 'completed'"
+          ></textarea>
+          <button
+            v-if="item.status !== 'completed'"
+            class="btn-primary"
+            :disabled="savingNote"
+            @click="saveNote"
+          >
+            {{ savingNote ? 'กำลังบันทึก...' : 'บันทึกหมายเหตุ' }}
+          </button>
         </section>
       </template>
 

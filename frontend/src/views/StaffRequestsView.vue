@@ -2,13 +2,18 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import StaffLayout from '../components/StaffLayout.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { apiFetch, getAuth } from '../composables/useAuth'
+import { formatId, sameId } from '../utils/format'
+
+const auth = getAuth()
+const userRole = auth?.role ?? ''
+const currentUserId = auth?.userId ?? null
 
 const requests = ref([])
 const statuses = ref({})
-const userRole = ref('')
-const currentUserId = ref(null)
 const currentTab = ref('my_tasks')
-const stats = reactive({ all: 0, pending: 0, in_progress: 0, completed: 0 })
+const loading = ref(true)
+const error = ref('')
 const filters = reactive({ q: '', status: '', service_type: '', urgency: '' })
 
 function urgencyClass(value) {
@@ -17,80 +22,85 @@ function urgencyClass(value) {
   return 'normal'
 }
 
-const getHeaders = () => {
-  const token = localStorage.getItem('token')
-  return {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
-  }
-}
-
 async function loadRequests() {
-  const params = new URLSearchParams()
-  Object.entries(filters).forEach(([key, value]) => {
-    if (value) params.set(key, value)
-  })
+  loading.value = true
+  error.value = ''
 
-  const response = await fetch(`/api/staff/requests?${params.toString()}`, {
-    headers: getHeaders()
-  })
-  const data = await response.json()
+  try {
+    const params = new URLSearchParams()
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value) params.set(key, typeof value === 'string' ? value.trim() : value)
+    })
 
-  requests.value = data.requests || []
-  statuses.value = data.statuses || {}
-  Object.assign(stats, data.stats || {})
+    const response = await apiFetch(`/api/staff/requests?${params.toString()}`)
+    if (!response.ok) throw new Error('load failed')
+
+    const data = await response.json()
+    requests.value = data.requests || []
+    statuses.value = data.statuses || {}
+  } catch {
+    error.value = 'ไม่สามารถโหลดรายการคำขอได้'
+  } finally {
+    loading.value = false
+  }
 }
 
 async function deleteRequest(item) {
   if (item.status !== 'completed') return
-  if (!confirm(`ยืนยันลบคำขอ REQ-${String(item.id).padStart(6, '0')} ?`)) return
+  if (!confirm(`ยืนยันลบคำขอ ${formatId('REQ', item.id)} ?`)) return
 
-  const response = await fetch(`/api/staff/requests/${item.id}`, {
-    method: 'DELETE',
-    headers: getHeaders()
-  })
+  try {
+    const response = await apiFetch(`/api/staff/requests/${item.id}`, {
+      method: 'DELETE'
+    })
 
-  const data = await response.json()
-  if (!response.ok) {
-    alert(data.message || 'ไม่สามารถลบรายการได้')
-    return
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      alert(data.message || 'ไม่สามารถลบรายการได้')
+      return
+    }
+
+    await loadRequests()
+  } catch {
+    alert('ไม่สามารถเชื่อมต่อกับระบบได้')
   }
-
-  await loadRequests()
 }
 
+// ช่างเห็นเฉพาะงานซ่อม แม่บ้านเห็นเฉพาะงานทำความสะอาดในแท็บ "ยังไม่มอบหมาย"
+// (ฝั่ง backend ต้องบังคับสิทธิ์จริงอีกชั้นเสมอ)
+const roleServiceType = computed(() => {
+  if (userRole === 'technician') return 'แจ้งซ่อม'
+  if (userRole === 'maid') return 'แจ้งทำความสะอาด'
+  return ''
+})
+
 const displayRequests = computed(() => {
-  if (userRole.value === 'admin') {
-    return requests.value 
-  }
+  if (userRole === 'admin') return requests.value
 
   if (currentTab.value === 'my_tasks') {
-    return requests.value.filter(r => r.assigned_to == currentUserId.value)
-  } else if (currentTab.value === 'unassigned') {
-    return requests.value.filter(r => !r.assigned_to)
+    return requests.value.filter((r) => sameId(r.assigned_to, currentUserId))
   }
-  
-  return requests.value 
+
+  if (currentTab.value === 'unassigned') {
+    return requests.value.filter((r) => (
+      !r.assigned_to &&
+      (!roleServiceType.value || r.service_type === roleServiceType.value)
+    ))
+  }
+
+  return requests.value
 })
 
-const currentStats = computed(() => {
-  return {
-    all: displayRequests.value.length,
-    pending: displayRequests.value.filter(r => r.status === 'pending').length,
-    in_progress: displayRequests.value.filter(r => r.status === 'in_progress').length,
-    completed: displayRequests.value.filter(r => r.status === 'completed').length,
-  }
-})
+const currentStats = computed(() => ({
+  all: displayRequests.value.length,
+  pending: displayRequests.value.filter((r) => (r.status || 'pending') === 'pending').length,
+  in_progress: displayRequests.value.filter((r) => r.status === 'in_progress').length,
+  completed: displayRequests.value.filter((r) => r.status === 'completed').length
+}))
 
-onMounted(() => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    const payload = JSON.parse(atob(token.split('.')[1]))
-    userRole.value = payload.role
-    currentUserId.value = payload.user_id
-  }
-  loadRequests()
-})
+const columnCount = computed(() => (userRole === 'admin' ? 9 : 8))
+
+onMounted(loadRequests)
 </script>
 
 <template>
@@ -100,6 +110,8 @@ onMounted(() => {
       <p>ค้นหา กรอง และติดตามสถานะคำขอทั้งหมด</p>
     </div>
 
+    <p v-if="error" class="flash error" role="alert">{{ error }}</p>
+
     <section class="stats-grid four">
       <article class="stat-card"><span>ทั้งหมด</span><strong>{{ currentStats.all }}</strong></article>
       <article class="stat-card"><span>รอดำเนินการ</span><strong>{{ currentStats.pending }}</strong></article>
@@ -108,21 +120,24 @@ onMounted(() => {
     </section>
 
     <div v-if="userRole !== 'admin'" style="display: flex; gap: 10px; margin-bottom: 20px;">
-      <button 
+      <button
+        type="button"
         :class="currentTab === 'my_tasks' ? 'btn-primary' : 'btn-soft'"
         @click="currentTab = 'my_tasks'"
       >
         <i class="fa-solid fa-user-check"></i> งานของฉัน
       </button>
-      
-      <button 
+
+      <button
+        type="button"
         :class="currentTab === 'unassigned' ? 'btn-primary' : 'btn-soft'"
         @click="currentTab = 'unassigned'"
       >
-        <i class="fa-solid fa-inbox"></i> งานใหม่ (รอรับ)
+        <i class="fa-solid fa-inbox"></i> ยังไม่มอบหมาย
       </button>
 
-      <button 
+      <button
+        type="button"
         :class="currentTab === 'all' ? 'btn-primary' : 'btn-soft'"
         @click="currentTab = 'all'"
       >
@@ -132,20 +147,20 @@ onMounted(() => {
 
     <section class="card">
       <form class="filter-grid requests" @submit.prevent="loadRequests">
-        <input v-model="filters.q" placeholder="ค้นหาเลขคำขอ รายละเอียด ห้อง...">
+        <input v-model="filters.q" placeholder="ค้นหาเลขคำขอ รายละเอียด ห้อง..." aria-label="ค้นหา">
 
-        <select v-model="filters.status">
+        <select v-model="filters.status" aria-label="กรองตามสถานะ">
           <option value="">ทุกสถานะ</option>
           <option v-for="(label, key) in statuses" :key="key" :value="key">{{ label }}</option>
         </select>
 
-        <select v-model="filters.service_type">
+        <select v-model="filters.service_type" aria-label="กรองตามประเภท">
           <option value="">ทุกประเภท</option>
           <option>แจ้งซ่อม</option>
           <option>แจ้งทำความสะอาด</option>
         </select>
 
-        <select v-model="filters.urgency">
+        <select v-model="filters.urgency" aria-label="กรองตามความเร่งด่วน">
           <option value="">ทุกความเร่งด่วน</option>
           <option>เร่งด่วน</option>
           <option>ปกติ</option>
@@ -161,21 +176,21 @@ onMounted(() => {
             <tr>
               <th>เลขคำขอ</th>
               <th>ประเภท</th>
+              <th>ความเร่งด่วน</th>
               <th>สถานที่</th>
               <th>รายละเอียด</th>
-              <th>ความเร่งด่วน</th>
-              <th v-if="userRole === 'admin'">ผู้รับผิดชอบ</th>
               <th>สถานะ</th>
+              <th v-if="userRole === 'admin'">ผู้รับผิดชอบ</th>
               <th>วันที่พบ</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="item in displayRequests" :key="item.id">
-              <td>REQ-{{ String(item.id).padStart(6, '0') }}</td>
+              <td>{{ formatId('REQ', item.id) }}</td>
+              <td>{{ item.service_type }}</td>
               <td>
-                {{ item.service_type }}<br>
-                <span class="badge" :class="urgencyClass(item.urgency)" style="margin-top: 5px;">{{ item.urgency }}</span>
+                <span class="badge" :class="urgencyClass(item.urgency)">{{ item.urgency }}</span>
               </td>
               <td>{{ item.building }} ชั้น {{ item.floor }} ห้อง {{ item.room }}</td>
               <td class="description-cell">{{ item.description }}</td>
@@ -208,9 +223,9 @@ onMounted(() => {
             </tr>
 
             <tr v-if="!displayRequests.length">
-              <td colspan="9" style="text-align: center; padding: 40px; color: #666;">
+              <td :colspan="columnCount" style="text-align: center; padding: 40px; color: #666;">
                 <i class="fa-solid fa-folder-open" style="font-size: 24px; margin-bottom: 10px; color: #ccc; display: block;"></i>
-                ไม่พบรายการ
+                {{ loading ? 'กำลังโหลด...' : 'ไม่พบรายการ' }}
               </td>
             </tr>
           </tbody>

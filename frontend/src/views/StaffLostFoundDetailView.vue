@@ -1,36 +1,42 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import StaffLayout from '../components/StaffLayout.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import ImageLightbox from '../components/ImageLightbox.vue'
+import { apiFetch } from '../composables/useAuth'
+import { formatId } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
 const item = ref(null)
 const statuses = ref({})
 const imageViewerIndex = ref(-1)
+const error = ref('')
+const updating = ref(false)
 
-const getHeaders = () => {
-  const token = localStorage.getItem('token')
-  return {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
-  }
-}
+const lightboxImages = computed(() => {
+  if (!item.value) return []
+  if (item.value.images?.length) return item.value.images
+  return item.value.image_path ? [item.value.image_path] : []
+})
 
 async function loadDetail() {
-  const response = await fetch(`/api/staff/lost-found/${route.params.id}`, {
-    headers: getHeaders()
-  })
-  if (!response.ok) {
-    router.replace('/staff/lost-found')
-    return
-  }
+  error.value = ''
 
-  const data = await response.json()
-  item.value = data.item
-  statuses.value = data.statuses || {}
+  try {
+    const response = await apiFetch(`/api/staff/lost-found/${route.params.id}`)
+    if (!response.ok) {
+      router.replace('/staff/lost-found')
+      return
+    }
+
+    const data = await response.json()
+    item.value = data.item
+    statuses.value = data.statuses || {}
+  } catch {
+    error.value = 'ไม่สามารถโหลดรายละเอียดได้'
+  }
 }
 
 function openImageViewer(index) {
@@ -42,20 +48,38 @@ function closeImageViewer() {
 }
 
 async function updateStatus(status) {
-  const response = await fetch(`/api/staff/lost-found/${route.params.id}/status`, {
-    method: 'PATCH',
-    headers: getHeaders(),
-    body: JSON.stringify({ status })
-  })
+  if (updating.value) return
 
-  if (response.ok) await loadDetail()
+  updating.value = true
+  error.value = ''
+
+  try {
+    const response = await apiFetch(`/api/staff/lost-found/${route.params.id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status })
+    })
+
+    if (response.ok) {
+      await loadDetail()
+    } else {
+      const data = await response.json().catch(() => ({}))
+      error.value = data.message || 'ไม่สามารถเปลี่ยนสถานะได้'
+    }
+  } catch {
+    error.value = 'ไม่สามารถเชื่อมต่อกับระบบได้'
+  } finally {
+    updating.value = false
+  }
 }
 
+watch(() => route.params.id, loadDetail)
 onMounted(loadDetail)
 </script>
 
 <template>
   <StaffLayout>
+    <p v-if="error" class="flash error" role="alert">{{ error }}</p>
+
     <template v-if="item">
       <RouterLink class="back-link" to="/staff/lost-found">
         <i class="fa-solid fa-chevron-left"></i>
@@ -63,7 +87,7 @@ onMounted(loadDetail)
       </RouterLink>
 
       <div class="staff-page-title">
-        <h1>รายละเอียดของที่เก็บได้ LF-{{ String(item.id).padStart(6, '0') }}</h1>
+        <h1>รายละเอียดของที่เก็บได้ {{ formatId('LF', item.id) }}</h1>
         <p>ข้อมูลสิ่งของที่มีผู้พบและแจ้งเข้ามาในระบบ</p>
       </div>
 
@@ -140,7 +164,7 @@ onMounted(loadDetail)
             :key="key"
             class="status-button"
             :class="{ active: item.status === key }"
-            :disabled="item.status === key"
+            :disabled="item.status === key || updating"
             @click="updateStatus(key)"
           >
             {{ label }}
@@ -150,7 +174,7 @@ onMounted(loadDetail)
     </template>
 
     <ImageLightbox
-      :images="item?.images?.length ? item.images : (item?.image_path ? [item.image_path] : [])"
+      :images="lightboxImages"
       :index="imageViewerIndex"
       @update:index="imageViewerIndex = $event"
       @close="closeImageViewer"

@@ -2,31 +2,35 @@
 import { onMounted, reactive, ref } from 'vue'
 import StaffLayout from '../components/StaffLayout.vue'
 import StatusBadge from '../components/StatusBadge.vue'
+import { apiFetch } from '../composables/useAuth'
+import { formatId } from '../utils/format'
 
 const items = ref([])
 const statuses = ref({})
 const filters = reactive({ q: '', status: '' })
-
-const getHeaders = () => {
-  const token = localStorage.getItem('token')
-  return {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
-  }
-}
+const loading = ref(true)
+const error = ref('')
 
 async function loadItems() {
-  const params = new URLSearchParams()
-  if (filters.q) params.set('q', filters.q)
-  if (filters.status) params.set('status', filters.status)
+  loading.value = true
+  error.value = ''
 
-  const response = await fetch(`/api/staff/lost-found?${params}`, {
-    headers: getHeaders()
-  })
-  const data = await response.json()
+  try {
+    const params = new URLSearchParams()
+    if (filters.q.trim()) params.set('q', filters.q.trim())
+    if (filters.status) params.set('status', filters.status)
 
-  items.value = data.items || []
-  statuses.value = data.statuses || {}
+    const response = await apiFetch(`/api/staff/lost-found?${params}`)
+    if (!response.ok) throw new Error('load failed')
+
+    const data = await response.json()
+    items.value = data.items || []
+    statuses.value = data.statuses || {}
+  } catch {
+    error.value = 'ไม่สามารถโหลดรายการได้'
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(loadItems)
@@ -39,11 +43,13 @@ onMounted(loadItems)
       <p>จัดการรายการของที่มีผู้พบและแจ้งเข้ามาในระบบ</p>
     </div>
 
+    <p v-if="error" class="flash error" role="alert">{{ error }}</p>
+
     <section class="card">
       <form class="filter-grid lost-found" @submit.prevent="loadItems">
-        <input v-model="filters.q" placeholder="ค้นหาสิ่งของ สถานที่...">
+        <input v-model="filters.q" placeholder="ค้นหาสิ่งของ สถานที่..." aria-label="ค้นหา">
 
-        <select v-model="filters.status">
+        <select v-model="filters.status" aria-label="กรองตามสถานะ">
           <option value="">ทุกสถานะ</option>
           <option v-for="(label, key) in statuses" :key="key" :value="key">
             {{ label }}
@@ -67,7 +73,7 @@ onMounted(loadItems)
           </thead>
           <tbody>
             <tr v-for="item in items" :key="item.id">
-              <td>LF-{{ String(item.id).padStart(6, '0') }}</td>
+              <td>{{ formatId('LF', item.id) }}</td>
               <td>{{ item.item_name }}</td>
               <td>{{ item.location || '-' }}</td>
               <td>{{ item.event_date || '-' }}</td>
@@ -85,7 +91,7 @@ onMounted(loadItems)
             </tr>
 
             <tr v-if="!items.length">
-              <td colspan="6">ยังไม่มีรายการ</td>
+              <td colspan="6">{{ loading ? 'กำลังโหลด...' : 'ยังไม่มีรายการ' }}</td>
             </tr>
           </tbody>
         </table>

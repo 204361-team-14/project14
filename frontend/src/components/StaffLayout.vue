@@ -1,6 +1,8 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import ConfirmDialog from './ConfirmDialog.vue'
+import { confirmDialog } from '../composables/useDialog'
 
 const router = useRouter()
 const username = ref('')
@@ -30,11 +32,16 @@ onMounted(() => {
   }
 })
 
-function logout() {
-  if (confirm('คุณต้องการออกจากระบบใช่หรือไม่?')) {
-    localStorage.removeItem('token')
-    router.push('/login')
-  }
+async function logout() {
+  const ok = await confirmDialog('คุณต้องการออกจากระบบใช่หรือไม่?', {
+    title: 'ออกจากระบบ',
+    confirmText: 'ออกจากระบบ',
+    cancelText: 'ยกเลิก'
+  })
+  if (!ok) return
+
+  localStorage.removeItem('token')
+  router.push('/login')
 }
 </script>
 
@@ -47,12 +54,22 @@ function logout() {
       </div>
       
       <div class="staff-user-info" v-if="username">
-        <div class="user-badge">
+        <div
+          class="user-badge user-badge-action"
+          role="button"
+          tabindex="0"
+          aria-label="ออกจากระบบ"
+          title="แตะเพื่อออกจากระบบ"
+          @click="logout"
+          @keydown.enter.prevent="logout"
+          @keydown.space.prevent="logout"
+        >
           <i class="fa-solid fa-circle-user"></i>
           <span>
             <strong>{{ username }}</strong>
             <small class="role-text">({{ roleLabel }})</small>
           </span>
+          <i class="fa-solid fa-right-from-bracket badge-logout-icon" aria-hidden="true"></i>
         </div>
       </div>
     </header>
@@ -104,5 +121,31 @@ function logout() {
         <slot />
       </main>
     </div>
+
+    <ConfirmDialog />
   </div>
 </template>
+
+<style scoped>
+.user-badge-action {
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.15s ease;
+}
+
+.user-badge-action:hover {
+  opacity: 0.85;
+}
+
+.user-badge-action:active {
+  opacity: 0.7;
+}
+
+.staff-user-info .badge-logout-icon {
+  margin-left: 0.25rem;
+  font-size: 1rem;
+  opacity: 0.8;
+}
+</style>
