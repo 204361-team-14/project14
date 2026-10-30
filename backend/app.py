@@ -409,7 +409,9 @@ def room_qr_entry(qr_code):
     if room is None:
         return "ไม่พบห้องนี้ หรือ QR Code ถูกปิดใช้งาน", 404
 
-    return redirect(f"{PUBLIC_BASE_URL}/?room={qr_code}")
+    # QR เก่า (/room/<รหัส>) ยังใช้ได้: พาไปหน้าแจ้งซ่อม หรือแจ้งทำความสะอาดถ้าระบุ ?service=cleaning
+    page = "cleaning" if request.args.get("service") == "cleaning" else "repair"
+    return redirect(f"{PUBLIC_BASE_URL}/request/{page}?room={qr_code}")
 
 
 @app.get("/api/rooms/resolve/<qr_code>")
@@ -1052,14 +1054,16 @@ def room_qr_image(room_id):
     if room is None:
         return "ไม่พบห้องนี้", 404
 
-    target_url = f"{PUBLIC_BASE_URL}/room/{room['qr_code']}"
+    # ?service=repair (ค่าเริ่มต้น) หรือ ?service=cleaning -> QR ชี้ไปหน้าฟอร์มนั้นโดยตรงพร้อมรหัสห้อง
+    service = "cleaning" if request.args.get("service") == "cleaning" else "repair"
+    target_url = f"{PUBLIC_BASE_URL}/request/{service}?room={room['qr_code']}"
     img = qrcode.make(target_url)
     buffer = BytesIO()
     img.save(buffer, format="PNG")
     buffer.seek(0)
 
     download = request.args.get("download") == "1"
-    filename = f"QR_{room['building']}_{room['floor']}_{room['room_number']}.png"
+    filename = f"QR_{room['building']}_{room['floor']}_{room['room_number']}_{service}.png"
     return send_file(
         buffer,
         mimetype="image/png",

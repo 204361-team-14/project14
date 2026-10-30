@@ -12,12 +12,39 @@ const form = reactive({
   room_name: ''
 })
 
+<<<<<<< Updated upstream
 const currentToken = localStorage.getItem('token')
 const getHeaders = () => {
   const token = localStorage.getItem('token')
   return {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${token}`
+=======
+// เก็บ blob URL ของ QR ทั้งหมดไว้ เพื่อ revoke ตอนโหลดใหม่ / ออกจากหน้า
+let qrObjectUrls = []
+
+function revokeQrUrls() {
+  qrObjectUrls.forEach((url) => URL.revokeObjectURL(url))
+  qrObjectUrls = []
+}
+
+// QR หนึ่งอันต่อห้อง เปิดหน้าแจ้งซ่อมพร้อมใส่ห้องให้ (เปลี่ยนเป็น 'cleaning' ถ้าต้องการให้เปิดหน้าทำความสะอาด)
+// ผู้ใช้สลับประเภทบริการได้ในฟอร์มโดยห้องไม่หาย
+const QR_SERVICE = 'repair'
+
+// ดึงรูป QR ด้วย Authorization header แทนการแนบ token ใน URL
+async function loadQr(room) {
+  try {
+    const response = await apiFetch(`/api/staff/rooms/${room.id}/qr?service=${QR_SERVICE}`)
+    if (!response.ok) return
+
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    qrObjectUrls.push(url)
+    room.qrUrl = url
+  } catch {
+    // ไม่แสดง QR ของห้องนี้ แต่ห้องอื่นยังใช้งานได้
+>>>>>>> Stashed changes
   }
 }
 
@@ -53,6 +80,7 @@ async function createRoom() {
   await loadRooms()
 }
 
+<<<<<<< Updated upstream
 async function toggleRoom(room) {
   const response = await fetch(`/api/staff/rooms/${room.id}/toggle`, {
     method: 'PATCH',
@@ -60,6 +88,11 @@ async function toggleRoom(room) {
   })
 
   if (response.ok) await loadRooms()
+=======
+function qrFileName(room) {
+  const safe = (value) => String(value).replace(/[^\w.-]+/g, '_')
+  return `qr-${safe(room.building)}-${safe(room.floor)}-${safe(room.room_number)}-${QR_SERVICE}.png`
+>>>>>>> Stashed changes
 }
 
 onMounted(loadRooms)

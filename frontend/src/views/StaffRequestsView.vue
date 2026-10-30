@@ -56,8 +56,16 @@ async function deleteRequest(item) {
     return
   }
 
+<<<<<<< Updated upstream
   await loadRequests()
 }
+=======
+const roleServiceType = computed(() => {
+  if (userRole === 'technician') return 'แจ้งซ่อม'
+  if (userRole === 'maid') return 'แจ้งทำความสะอาด'
+  return ''
+})
+>>>>>>> Stashed changes
 
 const displayRequests = computed(() => {
   if (userRole.value === 'admin') {

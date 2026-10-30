@@ -1,9 +1,11 @@
 <script setup>
 import { onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import PublicHeader from '../components/PublicHeader.vue'
 import PublicFooter from '../components/PublicFooter.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 
+const route = useRoute()
 const q = ref('')
 const items = ref([])
 const statuses = ref({})
@@ -13,6 +15,41 @@ const formRef = ref(null)
 const foundImageFiles = ref([])
 const foundImagePreviews = ref([])
 const foundDate = ref('')
+<<<<<<< Updated upstream
+=======
+const maxDate = todayString()
+
+// สถานที่พบ: เติมอัตโนมัติจากห้องใน QR (?room=) ผู้ใช้แก้ไขได้
+const foundLocation = ref('')
+let qrLocationText = ''
+
+async function prefillLocationFromRoom() {
+  const code = String(route.query.room || '').trim()
+  if (!code) return
+
+  try {
+    const response = await fetch(`/api/rooms/resolve/${encodeURIComponent(code)}`)
+    if (!response.ok) return
+
+    const { room } = await response.json()
+    qrLocationText = `${room.building} ชั้น ${room.floor} ห้อง ${room.room_number}`
+    if (room.room_name) qrLocationText += ` (${room.room_name})`
+
+    if (!foundLocation.value.trim()) foundLocation.value = qrLocationText
+  } catch {
+    // ไม่เติมให้ ผู้ใช้กรอกเองได้
+  }
+}
+
+const {
+  previews: foundImagePreviews,
+  files: foundImageFiles,
+  notice: imageNotice,
+  onChange: onFoundImageChange,
+  remove: removeFoundImage,
+  clear: clearFoundImages
+} = useImageUploader(6)
+>>>>>>> Stashed changes
 
 function setCurrentFoundDate() {
   const now = new Date()
@@ -104,6 +141,19 @@ async function submitFoundItem(event) {
       return
     }
 
+<<<<<<< Updated upstream
+=======
+    form.reset()
+    // reset() ล้างช่องวันที่ด้วย ต้องใส่ค่าวันนี้กลับเข้าไปทั้ง state และ DOM
+    setCurrentFoundDate()
+    form.elements.event_date.value = foundDate.value
+    clearFoundImages()
+
+    // reset() ล้างช่องสถานที่ด้วย ใส่ห้องจาก QR กลับเข้าไป (ถ้ามี)
+    foundLocation.value = qrLocationText
+    form.elements.location.value = qrLocationText
+
+>>>>>>> Stashed changes
     message.value = 'บันทึกรายการของที่เก็บได้เรียบร้อยแล้ว'
     event.currentTarget.reset()
 
@@ -117,6 +167,7 @@ async function submitFoundItem(event) {
 
 onMounted(() => {
   setCurrentFoundDate()
+  prefillLocationFromRoom()
   loadItems()
 })
 </script>
@@ -160,8 +211,13 @@ onMounted(() => {
             </div>
 
             <div class="field full">
+<<<<<<< Updated upstream
               <label>สถานที่พบ</label>
               <input name="location" placeholder="เช่น CSB ชั้น 3 ห้อง 301">
+=======
+              <label for="lf-location">สถานที่พบ</label>
+              <input id="lf-location" v-model="foundLocation" name="location" placeholder="เช่น CSB ชั้น 3 ห้อง 301">
+>>>>>>> Stashed changes
             </div>
 
             <div class="field full">
@@ -292,4 +348,4 @@ onMounted(() => {
 
     <PublicFooter />
   </div>
-</template>
+</template> 
