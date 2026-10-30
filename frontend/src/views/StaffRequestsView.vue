@@ -66,8 +66,6 @@ async function deleteRequest(item) {
   }
 }
 
-// ช่างเห็นเฉพาะงานซ่อม แม่บ้านเห็นเฉพาะงานทำความสะอาดในแท็บ "ยังไม่มอบหมาย"
-// (ฝั่ง backend ต้องบังคับสิทธิ์จริงอีกชั้นเสมอ)
 const roleServiceType = computed(() => {
   if (userRole === 'technician') return 'แจ้งซ่อม'
   if (userRole === 'maid') return 'แจ้งทำความสะอาด'

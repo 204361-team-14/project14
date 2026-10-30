@@ -1,11 +1,13 @@
 <script setup>
 import { onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import PublicHeader from '../components/PublicHeader.vue'
 import PublicFooter from '../components/PublicFooter.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import { useImageUploader } from '../composables/useImageUploader'
 import { todayString } from '../utils/format'
 
+const route = useRoute()
 const q = ref('')
 const items = ref([])
 const statuses = ref({})
@@ -15,6 +17,26 @@ const submitting = ref(false)
 const formRef = ref(null)
 const foundDate = ref('')
 const maxDate = todayString()
+
+const foundLocation = ref('')
+let qrLocationText = ''
+
+async function prefillLocationFromRoom() {
+  const code = String(route.query.room || '').trim()
+  if (!code) return
+
+  try {
+    const response = await fetch(`/api/rooms/resolve/${encodeURIComponent(code)}`)
+    if (!response.ok) return
+
+    const { room } = await response.json()
+    qrLocationText = `${room.building} ชั้น ${room.floor} ห้อง ${room.room_number}`
+    if (room.room_name) qrLocationText += ` (${room.room_name})`
+
+    if (!foundLocation.value.trim()) foundLocation.value = qrLocationText
+  } catch {
+  }
+}
 
 const {
   previews: foundImagePreviews,
@@ -75,10 +97,13 @@ async function submitFoundItem() {
     }
 
     form.reset()
-    // reset() ล้างช่องวันที่ด้วย ต้องใส่ค่าวันนี้กลับเข้าไปทั้ง state และ DOM
     setCurrentFoundDate()
+    
     form.elements.event_date.value = foundDate.value
     clearFoundImages()
+
+    foundLocation.value = qrLocationText
+    form.elements.location.value = qrLocationText
 
     message.value = 'บันทึกรายการของที่เก็บได้เรียบร้อยแล้ว'
     await loadItems()
@@ -91,6 +116,7 @@ async function submitFoundItem() {
 
 onMounted(() => {
   setCurrentFoundDate()
+  prefillLocationFromRoom()
   loadItems()
 })
 </script>
@@ -141,7 +167,7 @@ onMounted(() => {
 
             <div class="field full">
               <label for="lf-location">สถานที่พบ</label>
-              <input id="lf-location" name="location" placeholder="เช่น CSB ชั้น 3 ห้อง 301">
+              <input id="lf-location" v-model="foundLocation" name="location" placeholder="เช่น CSB ชั้น 3 ห้อง 301">
             </div>
 
             <div class="field full">
@@ -283,4 +309,4 @@ onMounted(() => {
 
     <PublicFooter />
   </div>
-</template>
+</template> 

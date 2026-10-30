@@ -18,6 +18,7 @@ function keepRoomQuery(path) {
 
 const repairLink = computed(() => keepRoomQuery('/request/repair'))
 const cleaningLink = computed(() => keepRoomQuery('/request/cleaning'))
+const lostFoundLink = computed(() => keepRoomQuery('/lost-found'))
 </script>
 
 <template>
@@ -113,7 +114,7 @@ const cleaningLink = computed(() => keepRoomQuery('/request/cleaning'))
 
             <RouterLink
               class="service-link"
-              to="/lost-found"
+              :to="lostFoundLink"
             >
               <span>เริ่มต้น</span>
 

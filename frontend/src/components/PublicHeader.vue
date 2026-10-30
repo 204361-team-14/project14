@@ -1,7 +1,21 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 
+const route = useRoute()
 const userRole = ref('')
+
+// ถ้าเข้ามาจากการสแกน QR ให้เก็บ ?room= ไว้ตอนกดไปหน้าแจ้งซ่อม/ทำความสะอาด/ของหาย
+function keepRoomQuery(path) {
+  return {
+    path,
+    query: route.query.room ? { room: route.query.room } : {}
+  }
+}
+
+const repairLink = computed(() => keepRoomQuery('/request/repair'))
+const cleaningLink = computed(() => keepRoomQuery('/request/cleaning'))
+const lostFoundLink = computed(() => keepRoomQuery('/lost-found'))
 
 onMounted(() => {
   const token = localStorage.getItem('token')
@@ -34,7 +48,17 @@ const isAdmin = computed(() => userRole.value === 'admin')
         หน้าหลัก
       </RouterLink>
 
-      <RouterLink to="/lost-found">
+      <RouterLink :to="repairLink">
+        <i class="fa-solid fa-wrench"></i>
+        แจ้งซ่อม
+      </RouterLink>
+
+      <RouterLink :to="cleaningLink">
+        <i class="fa-solid fa-broom"></i>
+        แจ้งทำความสะอาด
+      </RouterLink>
+
+      <RouterLink :to="lostFoundLink">
         <i class="fa-solid fa-magnifying-glass"></i>
         ของหาย-ของได้คืน
       </RouterLink>

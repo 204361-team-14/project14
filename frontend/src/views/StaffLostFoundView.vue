@@ -73,10 +73,17 @@ onMounted(loadItems)
           </thead>
           <tbody>
             <tr v-for="item in items" :key="item.id">
-              <td>{{ formatId('LF', item.id) }}</td>
+<<<<<<< Updated upstream
+              <td>LF-{{ String(item.id).padStart(6, '0') }}</td>
               <td>{{ item.item_name }}</td>
               <td>{{ item.location || '-' }}</td>
               <td>{{ item.event_date || '-' }}</td>
+=======
+              <td class="nowrap-cell">{{ formatId('LF', item.id) }}</td>
+              <td class="text-cell">{{ item.item_name }}</td>
+              <td class="text-cell">{{ item.location || '-' }}</td>
+              <td class="nowrap-cell">{{ item.event_date || '-' }}</td>
+>>>>>>> Stashed changes
               <td>
                 <StatusBadge
                   :status="item.status"
@@ -84,14 +91,24 @@ onMounted(loadItems)
                 />
               </td>
               <td>
-                <RouterLink class="text-link" :to="`/staff/lost-found/${item.id}`">
-                  ดูรายละเอียด
-                </RouterLink>
+                <div class="row-actions">
+                  <RouterLink class="text-link" :to="`/staff/lost-found/${item.id}`">
+                    <i class="fa-solid fa-eye"></i> ดู
+                  </RouterLink>
+                </div>
               </td>
             </tr>
 
             <tr v-if="!items.length">
               <td colspan="6">{{ loading ? 'กำลังโหลด...' : 'ยังไม่มีรายการ' }}</td>
+<<<<<<< Updated upstream
+              <td colspan="6">ยังไม่มีรายการ</td>
+=======
+              <td colspan="6" style="text-align: center; padding: 40px; color: #666;">
+                <i class="fa-solid fa-folder-open" style="font-size: 24px; margin-bottom: 10px; color: #ccc; display: block;"></i>
+                {{ loading ? 'กำลังโหลด...' : 'ยังไม่มีรายการ' }}
+              </td>
+>>>>>>> Stashed changes
             </tr>
           </tbody>
         </table>
@@ -99,3 +116,13 @@ onMounted(loadItems)
     </section>
   </StaffLayout>
 </template>
+
+<style scoped>
+.nowrap-cell {
+  white-space: nowrap;
+}
+
+.text-cell {
+  min-width: 150px;
+}
+</style>
