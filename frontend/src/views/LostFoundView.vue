@@ -76,7 +76,6 @@ async function submitFoundItem() {
   submitting.value = true
 
   try {
-    // อ่าน form จาก ref แทน event.currentTarget (ซึ่งเป็น null หลัง await)
     const form = formRef.value
     const formData = new FormData(form)
 
@@ -98,7 +97,6 @@ async function submitFoundItem() {
 
     form.reset()
     setCurrentFoundDate()
-    
     form.elements.event_date.value = foundDate.value
     clearFoundImages()
 
@@ -309,4 +307,4 @@ onMounted(() => {
 
     <PublicFooter />
   </div>
-</template> 
+</template>

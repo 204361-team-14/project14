@@ -49,10 +49,6 @@ const descriptionPlaceholder = computed(() => (
     ? 'อธิบายพื้นที่ ลักษณะงาน หรือสิ่งที่ต้องการให้ดำเนินการ'
     : 'อธิบายรายละเอียด เช่น อาการของปัญหา สิ่งที่ต้องการให้ดำเนินการ'
 ))
-
-// ค่าเริ่มต้นเป็นว่าง: ถ้าไม่ได้สแกน QR ผู้ใช้ต้องระบุห้องเอง
-// (เดิม hardcode เป็น CSB/3/301 ทำให้คำขอไปผิดห้องโดยไม่รู้ตัว)
-// สถานะการสแกน QR: '' (ไม่ได้สแกน) | 'found' | 'notfound' | 'error'
 const qrStatus = ref('')
 
 const qrRoom = reactive({
@@ -62,7 +58,6 @@ const qrRoom = reactive({
   room_name: ''
 })
 
-// เปลี่ยนชื่อจาก location เพื่อไม่ให้บัง window.location
 const roomLocation = reactive({
   building: '',
   floor: '',
@@ -103,7 +98,6 @@ function changeServiceType() {
   })
 }
 
-// ไปหน้าของหาย-ของได้คืนโดยพกรหัสห้องจาก QR ไปด้วย
 const lostFoundLink = computed(() => ({
   path: '/lost-found',
   query: route.query.room ? { room: route.query.room } : {}
@@ -262,7 +256,6 @@ async function resolveQrRoom() {
     roomLocation.room_name = room.room_name || ''
     qrStatus.value = 'found'
   } catch {
-    // ผู้ใช้ยังสามารถระบุห้องเองได้
     qrStatus.value = 'error'
   }
 }
@@ -336,7 +329,6 @@ onMounted(() => {
         </div>
       </section>
 
-      <!-- แจ้งผลการสแกน QR (เฉพาะขั้นกรอกข้อมูล) -->
       <template v-if="step === 1">
         <p v-if="qrStatus === 'found'" class="flash success" role="status">
           <i class="fa-solid fa-qrcode"></i>
@@ -354,7 +346,6 @@ onMounted(() => {
         </p>
       </template>
 
-      <!-- STEP 1 -->
       <section v-if="step === 1" class="request-main-layout">
         <div class="card request-form-card">
           <h2>ข้อมูลคำขอ</h2>
@@ -582,7 +573,6 @@ onMounted(() => {
         </aside>
       </section>
 
-      <!-- STEP 2 -->
       <section v-else-if="step === 2" class="request-review-layout">
         <div class="card review-card">
           <h2>ตรวจสอบข้อมูลก่อนส่ง</h2>
@@ -655,7 +645,6 @@ onMounted(() => {
         </div>
       </section>
 
-      <!-- STEP 3 -->
       <section v-else class="request-success-wrap">
         <div class="card request-success-card">
           <div class="success-icon">

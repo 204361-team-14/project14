@@ -5,7 +5,6 @@ import { useRoute } from 'vue-router'
 const route = useRoute()
 const userRole = ref('')
 
-// ถ้าเข้ามาจากการสแกน QR ให้เก็บ ?room= ไว้ตอนกดไปหน้าแจ้งซ่อม/ทำความสะอาด/ของหาย
 function keepRoomQuery(path) {
   return {
     path,

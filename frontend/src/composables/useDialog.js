@@ -14,7 +14,6 @@ export const dialogState = reactive({ open: false, ...defaults })
 let resolver = null
 
 function openDialog(options) {
-  // ถ้ามีกล่องค้างอยู่ ให้ปิดอันเก่าแบบ "ยกเลิก" ก่อน
   if (resolver) resolver(false)
 
   return new Promise((resolve) => {

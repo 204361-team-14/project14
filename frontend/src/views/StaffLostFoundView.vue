@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import StaffLayout from '../components/StaffLayout.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import { apiFetch } from '../composables/useAuth'
@@ -10,6 +10,14 @@ const statuses = ref({})
 const filters = reactive({ q: '', status: '' })
 const loading = ref(true)
 const error = ref('')
+
+// การ์ดสรุปด้านบน เหมือนหน้าคำขอบริการ (นับจากรายการที่โหลดมา)
+const stats = computed(() => ({
+  all: items.value.length,
+  open: items.value.filter((item) => item.status === 'open').length,
+  matched: items.value.filter((item) => item.status === 'matched').length,
+  returned: items.value.filter((item) => item.status === 'returned').length
+}))
 
 async function loadItems() {
   loading.value = true
@@ -45,6 +53,13 @@ onMounted(loadItems)
 
     <p v-if="error" class="flash error" role="alert">{{ error }}</p>
 
+    <section class="stats-grid four">
+      <article class="stat-card"><span>ทั้งหมด</span><strong>{{ stats.all }}</strong></article>
+      <article class="stat-card"><span>{{ statuses.open || 'กำลังประกาศ' }}</span><strong>{{ stats.open }}</strong></article>
+      <article class="stat-card"><span>{{ statuses.matched || 'พบรายการที่ตรงกัน' }}</span><strong>{{ stats.matched }}</strong></article>
+      <article class="stat-card"><span>{{ statuses.returned || 'คืนเจ้าของแล้ว' }}</span><strong>{{ stats.returned }}</strong></article>
+    </section>
+
     <section class="card">
       <form class="filter-grid lost-found" @submit.prevent="loadItems">
         <input v-model="filters.q" placeholder="ค้นหาสิ่งของ สถานที่..." aria-label="ค้นหา">
@@ -73,17 +88,10 @@ onMounted(loadItems)
           </thead>
           <tbody>
             <tr v-for="item in items" :key="item.id">
-<<<<<<< Updated upstream
-              <td>LF-{{ String(item.id).padStart(6, '0') }}</td>
-              <td>{{ item.item_name }}</td>
-              <td>{{ item.location || '-' }}</td>
-              <td>{{ item.event_date || '-' }}</td>
-=======
               <td class="nowrap-cell">{{ formatId('LF', item.id) }}</td>
               <td class="text-cell">{{ item.item_name }}</td>
               <td class="text-cell">{{ item.location || '-' }}</td>
               <td class="nowrap-cell">{{ item.event_date || '-' }}</td>
->>>>>>> Stashed changes
               <td>
                 <StatusBadge
                   :status="item.status"
@@ -100,15 +108,10 @@ onMounted(loadItems)
             </tr>
 
             <tr v-if="!items.length">
-              <td colspan="6">{{ loading ? 'กำลังโหลด...' : 'ยังไม่มีรายการ' }}</td>
-<<<<<<< Updated upstream
-              <td colspan="6">ยังไม่มีรายการ</td>
-=======
               <td colspan="6" style="text-align: center; padding: 40px; color: #666;">
                 <i class="fa-solid fa-folder-open" style="font-size: 24px; margin-bottom: 10px; color: #ccc; display: block;"></i>
                 {{ loading ? 'กำลังโหลด...' : 'ยังไม่มีรายการ' }}
               </td>
->>>>>>> Stashed changes
             </tr>
           </tbody>
         </table>

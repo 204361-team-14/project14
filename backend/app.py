@@ -1245,7 +1245,6 @@ def complete_request(request_id):
     
     now = datetime.now()
     with get_db() as conn:
-        # อัปเดตสถานะเป็น completed และบันทึกชื่อไฟล์รูป
         conn.execute(
             """
             UPDATE service_requests 
@@ -1254,7 +1253,6 @@ def complete_request(request_id):
             """,
             (image_path, now, request_id)
         )
-        # บันทึกประวัติ
         conn.execute(
             """
             INSERT INTO request_history (request_id, action, detail, created_at) 
